@@ -20,6 +20,9 @@ pub struct Msg {
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// 思考内容（v4 协议：仅 tool-call 轮回传 reasoning_content，普通轮丢弃省 token）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,15 +33,16 @@ pub struct Msg {
 
 impl Msg {
     pub fn user(text: &str) -> Msg {
-        Msg { role: "user".into(), content: Some(text.into()), tool_calls: None, tool_call_id: None, name: None }
+        Msg { role: "user".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None }
     }
     pub fn assistant(text: &str) -> Msg {
-        Msg { role: "assistant".into(), content: Some(text.into()), tool_calls: None, tool_call_id: None, name: None }
+        Msg { role: "assistant".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None }
     }
     pub fn tool_result(call_id: &str, text: &str) -> Msg {
         Msg {
             role: "tool".into(),
             content: Some(text.into()),
+            reasoning: None,
             tool_calls: None,
             tool_call_id: Some(call_id.into()),
             name: None,
@@ -47,8 +51,22 @@ impl Msg {
     pub fn to_value(&self) -> Value {
         let mut m = serde_json::Map::new();
         m.insert("role".into(), Value::String(self.role.clone()));
-        if let Some(c) = &self.content {
+        // assistant 恒有 content：reasoning-only 轮用空串（v4 网关拒 null，空串安全）
+        if self.role == "assistant" {
+            m.insert(
+                "content".into(),
+                Value::String(self.content.clone().unwrap_or_default()),
+            );
+        } else if let Some(c) = &self.content {
             m.insert("content".into(), Value::String(c.clone()));
+        }
+        // 官方 passback 规则：reasoning_content 仅 tool-call 轮回传，普通轮忽略（省 token）
+        if self.role == "assistant" && self.tool_calls.is_some() {
+            if let Some(r) = &self.reasoning {
+                if !r.is_empty() {
+                    m.insert("reasoning_content".into(), Value::String(r.clone()));
+                }
+            }
         }
         if let Some(tc) = &self.tool_calls {
             m.insert("tool_calls".into(), tc.clone());

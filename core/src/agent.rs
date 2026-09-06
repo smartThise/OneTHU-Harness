@@ -182,6 +182,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
     let sys = Msg {
         role: "system".into(),
         content: Some(system_prompt(&cfg)),
+        reasoning: None,
         tool_calls: None,
         tool_call_id: None,
         name: None,
@@ -284,6 +285,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             sess.messages.push(Msg {
                 role: "assistant".into(),
                 content: if turn.content.is_empty() { None } else { Some(turn.content.clone()) },
+                reasoning: if turn.reasoning.is_empty() { None } else { Some(turn.reasoning.clone()) },
                 tool_calls: Some(Value::Array(tc_json)),
                 tool_call_id: None,
                 name: None,
@@ -499,7 +501,7 @@ pub fn selftest() -> Value {
     push(config::resolve_hhmm("下午2点半") == Some((14, 30)), "hhmm 下午2点半");
     push(config::date_choice("明天") == Ok(1), "dateChoice 明天=1");
     let mut msgs = vec![
-        Msg { role: "system".into(), content: Some("sys".repeat(10)), tool_calls: None, tool_call_id: None, name: None },
+        Msg { role: "system".into(), content: Some("sys".repeat(10)), reasoning: None, tool_calls: None, tool_call_id: None, name: None },
         Msg::user(&"长".repeat(500)),
         Msg::assistant(&"长".repeat(500)),
         Msg::user("最新问题"),

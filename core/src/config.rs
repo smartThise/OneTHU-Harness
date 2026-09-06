@@ -28,16 +28,22 @@ pub struct Config {
 }
 
 impl Config {
-    /// 请求体 thinking 参数（R8 实测）：
-    /// - DeepSeek 系：off/on 切模型名（from_settings 已做），请求体不带 thinking；
-    /// - GLM/Zhipu 系（GLM-4.5+ 全系"始终思考"，disabled 会被 400 拒绝）：必须显式传
-    ///   thinking 对象，否则服务端按默认高档思考——首字节前干等实测 0.7s~28s 巨方差；
-    ///   off=effort low（最快），on=effort high；
+    /// 请求体 thinking 参数（R8 实测 + 对齐 DeepSeek Harness v4 协议）：
+    /// - DeepSeek 系（v4 flash/pro/vision…单模型名）：off → {type:"disabled"}（v4 支持关闭）；
+    ///   on → {type:"enabled"} + reasoning_effort high；
+    /// - GLM/Zhipu 系（GLM-4.5+ 全系"始终思考"，disabled 被 400 拒绝）：off → effort low
+    ///   （最快档），on → effort high；不传参数时服务端默认高档，首字节干等实测 0.7s~28s；
     /// - 其他端：不传，维持端点默认。
     pub fn apply_thinking(&self, body: &mut Value) {
         let m = self.model.to_lowercase();
         let u = self.base_url.to_lowercase();
-        if m.contains("deepseek") {
+        if m.contains("deepseek") || u.contains("deepseek") {
+            if self.thinking {
+                body["thinking"] = json!({ "type": "enabled" });
+                body["reasoning_effort"] = json!("high");
+            } else {
+                body["thinking"] = json!({ "type": "disabled" });
+            }
             return;
         }
         if m.contains("glm") || u.contains("bigmodel") || u.contains("paratera") || u.contains("zhipuai") {
@@ -57,17 +63,13 @@ impl Config {
             let b = get("baseUrl");
             if b.is_empty() { "https://api.deepseek.com/v1".into() } else { b.trim_end_matches('/').to_string() }
         };
-        let mut model = {
+        // v4 时代模型名直接上线（deepseek-v4-flash/pro/vision…），不再 chat/reasoner 换名——
+        // 思考开关由请求体 thinking/reasoning_effort 参数承载（apply_thinking）
+        let model = {
             let m = get("model");
             if m.is_empty() { "deepseek-chat".into() } else { m }
         };
         let thinking = matches!(get("thinking").to_lowercase().as_str(), "on" | "true" | "1" | "开");
-        // 思考模式（DeepSeek 语义）：chat ↔ reasoner 变体互换
-        if thinking && model == "deepseek-chat" {
-            model = "deepseek-reasoner".into();
-        } else if !thinking && model == "deepseek-reasoner" {
-            model = "deepseek-chat".into();
-        }
         Config {
             api_key: get("apiKey"),
             base_url: base,

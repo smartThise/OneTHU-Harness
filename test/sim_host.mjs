@@ -45,7 +45,8 @@ const server = http.createServer((req, res) => {
       });
       send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 401, completion_tokens: 31 } });
     } else if (!lastToolMsg) {
-      // 卡余额场景第 1 轮：要求调用 query_card_balance
+      // 卡余额场景第 1 轮：要求调用 query_card_balance（带 reasoning_content——v4 思考模型常态）
+      send({ choices: [{ delta: { reasoning_content: "先查余额再回答。" } }] });
       send({ choices: [{ delta: { content: "让我先查一下您的校园卡余额。" } }] });
       send({
         choices: [{
@@ -59,6 +60,14 @@ const server = http.createServer((req, res) => {
     } else {
       // 第 2 轮：用工具结果作答
       assert.ok(lastToolMsg.content.includes("123.45"), "工具结果应包含模拟余额");
+      // v4 协议断言：assistant(tool_calls) 轮回传 reasoning_content；content 恒为字符串（null 会被 400 砖会话）
+      const asstMsg = [...reqJson.messages].reverse().find((m) => m.role === "assistant" && m.tool_calls);
+      assert.ok(asstMsg, "第 2 轮请求应含 assistant(tool_calls) 消息");
+      assert.equal(asstMsg.reasoning_content, "先查余额再回答。", "tool-call 轮应回传 reasoning_content（官方 thinking_mode 规则）");
+      assert.equal(typeof asstMsg.content, "string", "assistant content 必须是字符串（防 null 砖会话）");
+      for (const m of reqJson.messages) {
+        if (m.role === "assistant") assert.equal(typeof m.content, "string", "所有 assistant 消息 content 必须为字符串");
+      }
       // 思考链双格式覆盖：reasoning_content 字段 + GLM 风格 <think> 内联（跨 chunk 撕裂："<thi"+"nk>"）
       send({ choices: [{ delta: { reasoning_content: "先核对工具结果…" } }] });
       send({ choices: [{ delta: { content: "<thi" } }] });
