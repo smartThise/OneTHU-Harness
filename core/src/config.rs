@@ -5,6 +5,7 @@
 //! 时钟 + 日历确定性换算成接口要的 YYYY-MM-DD / dateChoice，不让 LLM 心算日期。
 
 use chrono::{Datelike, Duration, Local, NaiveDate, Timelike, Weekday};
+use serde_json::{json, Value};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -27,6 +28,26 @@ pub struct Config {
 }
 
 impl Config {
+    /// 请求体 thinking 参数（R8 实测）：
+    /// - DeepSeek 系：off/on 切模型名（from_settings 已做），请求体不带 thinking；
+    /// - GLM/Zhipu 系（GLM-4.5+ 全系"始终思考"，disabled 会被 400 拒绝）：必须显式传
+    ///   thinking 对象，否则服务端按默认高档思考——首字节前干等实测 0.7s~28s 巨方差；
+    ///   off=effort low（最快），on=effort high；
+    /// - 其他端：不传，维持端点默认。
+    pub fn apply_thinking(&self, body: &mut Value) {
+        let m = self.model.to_lowercase();
+        let u = self.base_url.to_lowercase();
+        if m.contains("deepseek") {
+            return;
+        }
+        if m.contains("glm") || u.contains("bigmodel") || u.contains("paratera") || u.contains("zhipuai") {
+            body["thinking"] = json!({
+                "type": "enabled",
+                "effort": if self.thinking { "high" } else { "low" },
+            });
+        }
+    }
+
     pub fn from_settings(map: &serde_json::Map<String, serde_json::Value>) -> Config {
         let get = |k: &str| -> String {
             map.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string()

@@ -91,11 +91,13 @@ pub fn chat_turn(
     if cfg.stream {
         body["stream_options"] = json!({ "include_usage": true });
     }
+    cfg.apply_thinking(&mut body);
     (hooks.on_log)(&format!(
-        "→ LLM 请求 {} · msgs={} · stream={} · {}",
+        "→ LLM 请求 {} · msgs={} · stream={} · thinking={} · {}",
         cfg.model,
         messages.len(),
         cfg.stream,
+        body.get("thinking").map(|t| t.to_string()).unwrap_or_else(|| "default".into()),
         url
     ));
     let t0 = std::time::Instant::now();
