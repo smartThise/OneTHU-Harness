@@ -39,14 +39,56 @@ impl From<String> for LlmError {
     }
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+static DIRECT_AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+static PROXY_AGENT: std::sync::OnceLock<Option<ureq::Agent>> = std::sync::OnceLock::new();
+
+fn build_agent(proxy: Option<ureq::Proxy>) -> ureq::Agent {
+    let b = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(15))
         // 单次 socket 读的空闲上限：首 token / 流间歇都受它约束——
         // 端点悬挂（错误模型名、假端点）最多 75s 必报错，而不是无限等
         .timeout_read(std::time::Duration::from_secs(75))
-        .user_agent("OneTHU-Harness/0.1")
-        .build()
+        .user_agent("OneTHU-Harness/0.1");
+    match proxy {
+        Some(p) => b.proxy(p),
+        None => b,
+    }
+    .build()
+}
+
+/// 按请求 host 选 agent：标准代理环境变量（curl 语义）——https 请求优先
+/// HTTPS_PROXY/https_proxy，再 ALL_PROXY；NO_PROXY 后缀匹配豁免。
+/// curl/Node 系客户端都遵循此约定，ureq 默认不读——同 API 下应用直连被慢
+/// 线路拖住而别的客户端走代理，就是这个差异。
+fn agent_for(base_url: &str) -> ureq::Agent {
+    let host = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or("")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let exempt = no_proxy.split(',').any(|d| {
+        let d = d.trim().trim_start_matches('.');
+        !d.is_empty() && (host == d || host.ends_with(&format!(".{d}")))
+    });
+    if exempt {
+        return DIRECT_AGENT.get_or_init(|| build_agent(None)).clone();
+    }
+    if let Some(a) = PROXY_AGENT.get_or_init(|| {
+        ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
+            .iter()
+            .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
+            .and_then(|raw| ureq::Proxy::new(raw.trim()).ok())
+            .map(|p| build_agent(Some(p)))
+    }) {
+        return a.clone();
+    }
+    DIRECT_AGENT.get_or_init(|| build_agent(None)).clone()
 }
 
 fn http_err(e: ureq::Error) -> LlmError {
@@ -101,12 +143,52 @@ pub fn chat_turn(
         url
     ));
     let t0 = std::time::Instant::now();
-    let resp = match agent()
-        .post(&url)
-        .set("Authorization", &format!("Bearer {}", cfg.api_key))
-        .set("Content-Type", "application/json")
-        .send_string(&body.to_string())
-    {
+    let body_s = body.to_string();
+    if let Ok(dp) = std::env::var("ONETHU_DUMP_BODY") {
+        let _ = std::fs::write(&dp, &body_s);
+    }
+    let api_key = cfg.api_key.clone();
+    let post = move |a: &ureq::Agent| {
+        a.post(&url)
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_string(&body_s)
+    };
+    // 快失败竞速（R8）：paratera 等网关是双峰后端（实测首字节 <1s 或 8~30s）。
+    // 流式交互请求首字节 4s 未到即弃线重试（快峰占多数，两次重试后命中快后端 >90%）；
+    // 弃用的连接由分离线程自行结束（读上限 75s）。非流式请求首字节≈完整生成，不适用。
+    let mut resp: Option<Result<ureq::Response, ureq::Error>> = None;
+    if cfg.stream {
+        const FAST_FAIL_MS: u64 = 3000;
+        let mut raced = false;
+        for attempt in 0..3 {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let a = agent_for(&cfg.base_url);
+            let post_t = post.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(post_t(&a));
+            });
+            match rx.recv_timeout(std::time::Duration::from_millis(FAST_FAIL_MS)) {
+                Ok(r) => {
+                    resp = Some(r);
+                    raced = true;
+                    break;
+                }
+                Err(_) => {
+                    (hooks.on_log)(&format!(
+                        "↻ 首字节超 {FAST_FAIL_MS}ms（慢后端），弃线重试 {}/3",
+                        attempt + 1
+                    ));
+                }
+            }
+        }
+        let _ = raced;
+    }
+    let resp = match resp {
+        Some(r) => r,
+        None => post(&agent_for(&cfg.base_url)), // 非流式 / 两次竞速都慢：阻塞式兜底
+    };
+    let resp = match resp {
         Ok(r) => {
             (hooks.on_log)(&format!(
                 "← LLM 应答头 HTTP {} · {}ms",
