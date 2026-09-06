@@ -40,7 +40,9 @@ impl From<String> for LlmError {
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(15))
-        .timeout_read(std::time::Duration::from_secs(180))
+        // 单次 socket 读的空闲上限：首 token / 流间歇都受它约束——
+        // 端点悬挂（错误模型名、假端点）最多 75s 必报错，而不是无限等
+        .timeout_read(std::time::Duration::from_secs(75))
         .user_agent("OneTHU-Harness/0.1")
         .build()
 }
@@ -167,6 +169,15 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
             break;
         }
         let Ok(chunk) = serde_json::from_str::<Value>(data) else { continue };
+        // 端点把错误塞进 200 SSE 流（OpenAI 兼容变体）：data: {"error": {...}}
+        if let Some(err) = chunk.get("error") {
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| err.to_string());
+            return Err(LlmError { message: format!("LLM 错误：{msg}") });
+        }
         if let Some(u) = chunk.get("usage").filter(|u| u.is_object()) {
             usage = serde_json::from_value::<ApiUsage>(u.clone()).ok();
         }
@@ -214,4 +225,16 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
         }
     }
     Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage })
+}
+
+/// 空轮次兜底：EOF 无任何输出且非打断 → 视为端点异常（模型名错误常此相），报错而不是让 UI 干等
+pub fn ensure_nonempty(turn: Turn, was_interrupted: bool) -> Result<Turn, LlmError> {
+    if turn.content.is_empty()
+        && turn.reasoning.is_empty()
+        && turn.tool_calls.is_empty()
+        && !was_interrupted
+    {
+        return Err(LlmError { message: "模型无任何输出——请检查「模型」名称与 API Endpoint 是否正确".into() });
+    }
+    Ok(turn)
 }

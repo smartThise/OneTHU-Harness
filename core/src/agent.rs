@@ -240,6 +240,18 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             }
         }
 
+        // 打断先行判定：stream 可能因打断提前返回——回滚本轮输入，明确报「已打断」
+        if h.interrupted() {
+            let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
+            sess.messages = snapshot.clone();
+            sess.trace.pop();
+            store.save(h);
+            return json!({ "type": "chat", "ok": true, "answer": "（已打断）", "interrupted": true, "sessionId": sess_id });
+        }
+        let turn = match turn {
+            Ok(t) => llm::ensure_nonempty(t, false).map_err(|e| friendly_llm(e.message)),
+            Err(e) => Err(e),
+        };
         let turn = match turn {
             Ok(t) => t,
             Err(e) => {
