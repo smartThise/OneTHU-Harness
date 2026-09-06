@@ -6,9 +6,10 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// 数据面：onethu.* 原子调用（权限门禁在宿主侧）+ 打断标志
 pub trait Host {
@@ -31,23 +32,30 @@ pub enum Incoming {
     Response { id: u64, ok: bool, value: Value },
 }
 
-pub struct StdioHost {
-    rx: mpsc::Receiver<String>,
-    orphans: HashMap<u64, Result<Value, String>>,
-    deferred: Vec<(Value, String, Value)>,
-    seq: u64,
-    interrupt: Arc<AtomicBool>,
-}
-
 /// 通知到达时的回调：宿主主循环用它收「call 期间抵达的宿主请求」
 pub type Deferred = Vec<(Value, String, Value)>;
 
+type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+
+/// 桥回执等待上限：工具链路 TS 侧自带 45s，600s 是「宿主整个没了」级兜底
+const BRIDGE_TIMEOUT: Duration = Duration::from_secs(600);
+
+pub struct StdioHost {
+    /// 泵线程路由来的插件 RPC 请求/通知（主循环 poll 阻塞在此，无锁竞争）；
+    /// chat 进行中抵达的 run/dispose 在通道里排队——与旧 deferred 列表同语义同时序
+    req_rx: mpsc::Receiver<Incoming>,
+    /// 桥回执表：按序号投递，主循环与控制线程的桥调用天然并发
+    pending: PendingMap,
+    seq: Arc<AtomicU64>,
+    interrupt: Arc<AtomicBool>,
+}
+
 impl StdioHost {
-    /// 启动 stdin 读线程，返回主机句柄。
+    /// 启动 stdin 读线程 + 泵线程，返回主机句柄。
     /// interrupt 快路径：读线程看到 interrupt 立即置标志——主循环哪怕阻塞在
     /// LLM SSE 流上，打断也毫秒级生效（agent 循环逐块检查）。
     pub fn spawn() -> StdioHost {
-        let (tx, rx) = mpsc::channel::<String>();
+        let (line_tx, line_rx) = mpsc::channel::<String>();
         let interrupt = Arc::new(AtomicBool::new(false));
         let flag = interrupt.clone();
         std::thread::spawn(move || {
@@ -67,12 +75,72 @@ impl StdioHost {
                 if trimmed.contains("\"method\":\"interrupt\"") {
                     flag.store(true, Ordering::SeqCst);
                 }
-                if tx.send(trimmed.to_string()).is_err() {
+                if line_tx.send(trimmed.to_string()).is_err() {
                     break;
                 }
             }
         });
-        StdioHost { rx, orphans: HashMap::new(), deferred: Vec::new(), seq: 1000, interrupt }
+
+        let (req_tx, req_rx) = mpsc::channel::<Incoming>();
+        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+
+        // 泵线程：stdin 行的唯一路由器——回执按序号投递给等它的桥调用，
+        // 宿主→插件请求走 deferred 通道，通知交主循环。无锁竞争、无饥饿。
+        {
+            let pending = pending.clone();
+            std::thread::spawn(move || {
+                while let Ok(raw) = line_rx.recv() {
+                    let Ok(msg) = serde_json::from_str::<Value>(&raw) else {
+                        continue;
+                    };
+                    if let Some(method) = msg.get("method").and_then(|m| m.as_str()).map(String::from) {
+                        if method == "interrupt" {
+                            continue; // 读线程已置标志；此处仅消费
+                        }
+                        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+                        // 带 id = 宿主→插件的 RPC 请求（activate/run/dispose），交主循环；
+                        // 无 id = 通知（onethu.event 进度流），同样交主循环消费
+                        let incoming = match msg.get("id").cloned() {
+                            Some(id) if !id.is_null() => Incoming::Request { id, method, params },
+                            _ => Incoming::Notify { method, params },
+                        };
+                        let _ = req_tx.send(incoming);
+                        continue;
+                    }
+                    if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                        let out = if let Some(err) = msg.get("error") {
+                            Err(err
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(String::from)
+                                .unwrap_or_else(|| err.to_string()))
+                        } else {
+                            Ok(msg.get("result").cloned().unwrap_or(Value::Null))
+                        };
+                        if let Some(tx) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
+                            let _ = tx.send(out);
+                        }
+                    }
+                }
+            });
+        }
+
+        StdioHost {
+            req_rx,
+            pending,
+            seq: Arc::new(AtomicU64::new(1000)),
+            interrupt,
+        }
+    }
+
+    /// 控制线程用的独立桥句柄：与主循环共享回执表与打断标志——
+    /// 控制命令（会话管理/导入导出）另线程执行，不被在跑的 chat 卡住。
+    pub fn bridge(&self) -> BridgeHandle {
+        BridgeHandle {
+            pending: Arc::clone(&self.pending),
+            seq: Arc::clone(&self.seq),
+            interrupt: Arc::clone(&self.interrupt),
+        }
     }
 
     pub fn reply_ok(&self, id: &Value, result: Value) {
@@ -83,72 +151,48 @@ impl StdioHost {
         send(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }));
     }
 
-    /// 取下一条可见消息（阻塞）。
+    /// 取下一条请求/通知（阻塞；回执不经过这里——泵线程按序号直投桥调用方）
     pub fn poll(&mut self) -> Incoming {
-        loop {
-            let raw = match self.rx.recv() {
-                Ok(m) => m,
-                Err(_) => std::process::exit(0), // stdin 关闭 = 宿主已走
-            };
-            let Ok(msg) = serde_json::from_str::<Value>(&raw) else {
-                continue;
-            };
-            if let Some(method) = msg.get("method").and_then(|m| m.as_str()).map(String::from) {
-                if method == "interrupt" {
-                    continue; // 读线程已置标志；此处仅消费
-                }
-                let params = msg.get("params").cloned().unwrap_or(Value::Null);
-                match msg.get("id").cloned() {
-                    Some(id) if !id.is_null() => return Incoming::Request { id, method, params },
-                    _ => return Incoming::Notify { method, params },
-                }
-            }
-            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                let out = if let Some(err) = msg.get("error") {
-                    Err(err
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| err.to_string()))
-                } else {
-                    Ok(msg.get("result").cloned().unwrap_or(Value::Null))
-                };
-                let ok = out.is_ok();
-                return Incoming::Response { id, ok, value: out.unwrap_or(Value::Null) };
-            }
+        match self.req_rx.recv() {
+            Ok(i) => i,
+            Err(_) => std::process::exit(0), // stdin 关闭 = 宿主已走
         }
     }
 
-    /// call() 期间暂存的宿主请求（如 dispose），主循环事后补处理
+    /// 兼容桩：旧「call 期间暂存宿主请求」的语义现在由 req_rx 天然承载——
+    /// chat 进行中抵达的 run/dispose 在通道里排队，主循环回到 poll 后按序处理。
+    /// 保留空实现以维持 bin 侧调用面不变。
     pub fn take_deferred(&mut self) -> Deferred {
-        std::mem::take(&mut self.deferred)
+        Vec::new()
     }
+}
+
+/// 桥调用共用体：发请求 → 等泵线程按序号投递回执
+fn bridge_call(
+    pending: &PendingMap,
+    seq: &AtomicU64,
+    ns: &str,
+    method: &str,
+    args: Value,
+) -> Result<Value, String> {
+    let rid = seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let (tx, rx) = mpsc::channel::<Result<Value, String>>();
+    pending
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(rid, tx);
+    send(&json!({
+        "jsonrpc": "2.0", "id": rid,
+        "method": "onethu.call",
+        "params": { "ns": ns, "method": method, "args": args }
+    }));
+    rx.recv_timeout(BRIDGE_TIMEOUT)
+        .unwrap_or_else(|_| Err("宿主桥应答超时（600s）".into()))
 }
 
 impl Host for StdioHost {
     fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String> {
-        self.seq += 1;
-        let rid = self.seq;
-        send(&json!({
-            "jsonrpc": "2.0", "id": rid,
-            "method": "onethu.call",
-            "params": { "ns": ns, "method": method, "args": args }
-        }));
-        loop {
-            if let Some(out) = self.orphans.remove(&rid) {
-                return out;
-            }
-            match self.poll() {
-                Incoming::Response { id, ok, value } => {
-                    if id == rid {
-                        return if ok { Ok(value) } else { Err(value_to_msg(&value)) };
-                    }
-                    self.orphans.insert(id, if ok { Ok(value) } else { Err(value_to_msg(&value)) });
-                }
-                Incoming::Request { id, method, params } => self.deferred.push((id, method, params)),
-                Incoming::Notify { .. } => {}
-            }
-        }
+        bridge_call(&self.pending, &self.seq, ns, method, args)
     }
 
     fn interrupted(&self) -> bool {
@@ -157,6 +201,33 @@ impl Host for StdioHost {
 
     fn reset_interrupt(&self) {
         self.interrupt.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 控制线程桥：不提供 reset_interrupt（绝不能清掉在跑 chat 的打断标志）
+pub struct BridgeHandle {
+    pending: PendingMap,
+    seq: Arc<AtomicU64>,
+    interrupt: Arc<AtomicBool>,
+}
+
+impl BridgeHandle {
+    pub fn reply_ok(&self, id: &Value, result: Value) {
+        send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    }
+
+    pub fn reply_err(&self, id: &Value, message: &str) {
+        send(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }));
+    }
+}
+
+impl Host for BridgeHandle {
+    fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String> {
+        bridge_call(&self.pending, &self.seq, ns, method, args)
+    }
+
+    fn interrupted(&self) -> bool {
+        self.interrupt.load(Ordering::SeqCst)
     }
 }
 

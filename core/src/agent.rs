@@ -221,6 +221,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
         // 流式钩子（R4）：回答增量直推 dock；思考增量缓冲到 ~160 字再推
         let think_buf = std::cell::RefCell::new(String::new());
         let mut hooks = Hooks {
+            on_log: Box::new(|l: &str| progress(emit, "log", l, None)),
             on_delta: Box::new(|d: &str| progress(emit, "delta", d, None)),
             on_think: Box::new(|d: &str| {
                 let mut b = think_buf.borrow_mut();
@@ -312,10 +313,18 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             }
             let args: Value = serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({ "_raw": tc.arguments }));
             progress(emit, "tool", &format!("🔧 {}", tc.name), Some(json!({ "step": step, "total": cfg.max_steps })));
+            let t_tool = std::time::Instant::now();
+            let args_brief: String = serde_json::to_string(&args).unwrap_or_default().chars().take(160).collect();
+            (hooks.on_log)(&format!("→ 工具 {} · 步骤 {} · 参数 {}", tc.name, step, args_brief));
             let outcome = {
                 let mut ctx = Ctx { h };
                 tools::execute(&mut ctx, &tc.name, &args, false)
             };
+            (hooks.on_log)(&format!(
+                "← 工具 {} 完成 · {}ms",
+                tc.name,
+                t_tool.elapsed().as_millis()
+            ));
             match outcome {
                 Ok(ToolOut::Text(text)) => {
                     let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();

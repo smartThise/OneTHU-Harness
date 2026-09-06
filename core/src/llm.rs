@@ -25,6 +25,8 @@ pub struct Hooks<'a> {
     pub on_delta: Box<dyn FnMut(&str) + 'a>,
     /// 思考增量（deepseek-reasoner reasoning_content）
     pub on_think: Box<dyn FnMut(&str) + 'a>,
+    /// 结构化运行日志（R7）：LLM 请求/响应/错误全程上日志事件
+    pub on_log: Box<dyn FnMut(&str) + 'a>,
 }
 
 pub struct LlmError {
@@ -89,13 +91,34 @@ pub fn chat_turn(
     if cfg.stream {
         body["stream_options"] = json!({ "include_usage": true });
     }
-let _ = h.call("log", "log", json!([format!("[harness] LLM \u{2190} {} ({} msgs, stream={})", cfg.model, messages.len(), cfg.stream)]));
-    let resp = agent()
+    (hooks.on_log)(&format!(
+        "→ LLM 请求 {} · msgs={} · stream={} · {}",
+        cfg.model,
+        messages.len(),
+        cfg.stream,
+        url
+    ));
+    let t0 = std::time::Instant::now();
+    let resp = match agent()
         .post(&url)
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
-        .map_err(http_err)?;
+    {
+        Ok(r) => {
+            (hooks.on_log)(&format!(
+                "← LLM 应答头 HTTP {} · {}ms",
+                r.status(),
+                t0.elapsed().as_millis()
+            ));
+            r
+        }
+        Err(e) => {
+            let err = http_err(e);
+            (hooks.on_log)(&format!("✗ LLM 失败（{}ms）：{}", t0.elapsed().as_millis(), err.message));
+            return Err(err);
+        }
+    };
 
     if cfg.stream {
         let ctype = resp.content_type().to_string();
