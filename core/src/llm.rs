@@ -139,7 +139,20 @@ fn parse_completion(v: Value) -> Result<Turn, LlmError> {
     }
     let choice = v.get("choices").and_then(|c| c.get(0)).cloned().unwrap_or(Value::Null);
     let msg = choice.get("message").cloned().unwrap_or(Value::Null);
-    let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let mut content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    // 非流式也要剥 <think> 内联思考（GLM 等端点；剥离后进 reasoning，dock 思考链可见）
+    let mut reasoning = msg
+        .get("reasoning_content")
+        .or_else(|| msg.get("reasoning"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    if let Some(a) = content.find("<think>") {
+        if let Some(b) = content.find("</think>") {
+            reasoning.push_str(&content[a + 7..b]);
+            content = format!("{}{}", &content[..a], content[b + 8..].trim_start());
+        }
+    }
     let tool_calls = msg
         .get("tool_calls")
         .and_then(|t| t.as_array())
@@ -157,11 +170,13 @@ fn parse_completion(v: Value) -> Result<Turn, LlmError> {
         })
         .unwrap_or_default();
     let usage = v.get("usage").and_then(|u| serde_json::from_value::<ApiUsage>(u.clone()).ok());
-    Ok(Turn { content, reasoning: String::new(), tool_calls, usage })
+    Ok(Turn { content, reasoning, tool_calls, usage })
 }
 
 /// SSE 流解析：逐块回调 delta/think；tool_calls 按 index 增量拼接
 fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<Turn, LlmError> {
+    // 参考 DeepSeek Harness 的块式组装：思考先行（reasoning_content / <think> 内联双兼容），
+    // tool_calls 按 index 增量累积；事件按时间窗批处理——逐 token 发事件会把 IPC 与日志刷爆。
     let reader = resp.into_reader();
     let mut br = std::io::BufReader::new(reader);
     let mut line = String::new();
@@ -171,9 +186,90 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
     let mut calls: std::collections::BTreeMap<u64, ToolCall> = std::collections::BTreeMap::new();
     let mut usage: Option<ApiUsage> = None;
 
+    // <think> 路由态：GLM 等端点把思考以 <think>…</think> 内联在 content 里
+    let mut raw = String::new();
+    let mut scan = 0usize;
+    let mut in_think = false;
+
+    // 事件批处理：首个片段立即出，之后每 ~120ms 或 >400 字节一刷
+    let mut delta_buf = String::new();
+    let mut think_buf = String::new();
+    let mut last_flush = std::time::Instant::now();
+    let mut first_out = true;
+    const BATCH_MS: u128 = 120;
+
+    macro_rules! flush {
+        () => {
+            if !delta_buf.is_empty() {
+                (hooks.on_delta)(&delta_buf.clone());
+                delta_buf.clear();
+            }
+            if !think_buf.is_empty() {
+                (hooks.on_think)(&think_buf.clone());
+                think_buf.clear();
+            }
+            last_flush = std::time::Instant::now();
+        };
+    }
+
+    // 把 raw[scan..] 里已确定路由的部分吐出；hold 字节尾巴防标签跨 chunk 撕裂
+    macro_rules! pump {
+        ($final:expr) => {{
+            let hold = if $final { 0 } else { "</think>".len() };
+            loop {
+                if raw.len() <= scan + hold {
+                    break;
+                }
+                let rest = &raw[scan..];
+                match rest.find(if in_think { "</think>" } else { "<think>" }) {
+                    Some(0) => {
+                        in_think = !in_think;
+                        scan += if in_think { "<think>".len() } else { "</think>".len() };
+                    }
+                    Some(i) => {
+                        let seg = &rest[..i];
+                        if in_think {
+                            reasoning.push_str(seg);
+                            think_buf.push_str(seg);
+                        } else {
+                            content.push_str(seg);
+                            delta_buf.push_str(seg);
+                        }
+                        scan += i;
+                    }
+                    None => {
+                        let mut take = rest.len() - hold;
+                        while take > 0 && !raw.is_char_boundary(scan + take) {
+                            take -= 1;
+                        }
+                        let seg = &rest[..take];
+                        if in_think {
+                            reasoning.push_str(seg);
+                            think_buf.push_str(seg);
+                        } else {
+                            content.push_str(seg);
+                            delta_buf.push_str(seg);
+                        }
+                        scan += take;
+                        break;
+                    }
+                }
+                let elapsed = last_flush.elapsed().as_millis();
+                if first_out || elapsed >= BATCH_MS
+                    || delta_buf.len() > 400
+                    || think_buf.len() > 400
+                {
+                    flush!();
+                    first_out = false;
+                }
+            }
+        }};
+    }
+
     loop {
         // 打断：SSE 逐块检查（R4）
         if h.interrupted() {
+            flush!();
             return Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage });
         }
         line.clear();
@@ -209,16 +305,22 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
             // finish_reason 出现后通常还有 usage 尾包，不 break，等 [DONE]/EOF
         }
         let Some(delta) = choice.get("delta") else { continue };
-        if let Some(rc) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
+        // 思考：DeepSeek 系 reasoning_content / 部分网关 reasoning 字段
+        if let Some(rc) = delta
+            .get("reasoning_content")
+            .or_else(|| delta.get("reasoning"))
+            .and_then(|c| c.as_str())
+        {
             if !rc.is_empty() {
                 reasoning.push_str(rc);
-                (hooks.on_think)(rc);
+                think_buf.push_str(rc);
             }
         }
+        // 正文：进 <think> 路由（内联思考不再混进回答）
         if let Some(dc) = delta.get("content").and_then(|c| c.as_str()) {
             if !dc.is_empty() {
-                content.push_str(dc);
-                (hooks.on_delta)(dc);
+                raw.push_str(dc);
+                pump!(false);
             }
         }
         if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
@@ -247,6 +349,9 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
             }
         }
     }
+    // 收尾：清掉撕裂尾巴与未闭合的 <think>
+    pump!(true);
+    flush!();
     Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage })
 }
 

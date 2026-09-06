@@ -59,7 +59,11 @@ const server = http.createServer((req, res) => {
     } else {
       // 第 2 轮：用工具结果作答
       assert.ok(lastToolMsg.content.includes("123.45"), "工具结果应包含模拟余额");
-      send({ choices: [{ delta: { content: "您的校园卡余额是 " } }] });
+      // 思考链双格式覆盖：reasoning_content 字段 + GLM 风格 <think> 内联（跨 chunk 撕裂："<thi"+"nk>"）
+      send({ choices: [{ delta: { reasoning_content: "先核对工具结果…" } }] });
+      send({ choices: [{ delta: { content: "<thi" } }] });
+      send({ choices: [{ delta: { content: "nk>内部核对：余额 123.45 无误</thi" } }] });
+      send({ choices: [{ delta: { content: "nk>您的校园卡余额是 " } }] });
       send({ choices: [{ delta: { content: "123.45 元，祝用餐愉快。" } }] });
       send({ choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 512, completion_tokens: 23 } });
     }
@@ -162,6 +166,8 @@ async function main() {
   assert.equal(chat.result.usage.prompt, 833, "usage.prompt 应=321+512");
   assert.equal(chat.result.usage.completion, 40, "usage.completion 应=17+23");
   assert.equal(chat.result.totalUsage.calls, 2, "usage.calls 应=2");
+  assert.ok(!chat.result.answer.includes("内部核对"), "内联 <think> 思考不得混进回答正文");
+  assert.ok(events.some((e) => e.params?.kind === "think" && (e.params.text ?? "").includes("内部核对")), "内联 <think> 应路由为思考链事件");
   console.log("✓ agent 循环：", chat.result.answer);
   console.log("  用量：", JSON.stringify(chat.result.usage), "成本：$", chat.result.usage.costUsd.toFixed(5));
 

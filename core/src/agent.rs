@@ -218,28 +218,15 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             Some(json!({ "step": step, "total": cfg.max_steps })),
         );
 
-        // 流式钩子（R4）：回答增量直推 dock；思考增量缓冲到 ~160 字再推
-        let think_buf = std::cell::RefCell::new(String::new());
+        // 流式钩子（R4）：核心侧已按 ~120ms 批处理增量事件，这里全部直通——
+        // 二次缓冲只会徒增首字延迟（之前 160 字缓冲把流式感拖没了）
         let mut hooks = Hooks {
             on_log: Box::new(|l: &str| progress(emit, "log", l, None)),
             on_delta: Box::new(|d: &str| progress(emit, "delta", d, None)),
-            on_think: Box::new(|d: &str| {
-                let mut b = think_buf.borrow_mut();
-                b.push_str(d);
-                if b.chars().count() >= 160 {
-                    progress(emit, "think", &b.clone(), None);
-                    b.clear();
-                }
-            }),
+            on_think: Box::new(|d: &str| progress(emit, "think", d, None)),
         };
         let turn = llm::chat_turn(h, &cfg, &msgs, &tools_schema, &mut hooks)
             .map_err(|e| friendly_llm(e.message));
-        {
-            let b = think_buf.borrow();
-            if !b.is_empty() {
-                progress(emit, "think", &b, None);
-            }
-        }
 
         // 打断先行判定：stream 可能因打断提前返回——回滚本轮输入，明确报「已打断」
         if h.interrupted() {
