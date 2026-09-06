@@ -1,0 +1,19 @@
+[package]
+name = "onethu-harness"
+version = "0.1.0"
+edition = "2021"
+description = "OneTHU Harness stdio sidecar —— OneTHU 宿主以独立进程拉起（桌面端）"
+authors = ["smartThise"]
+
+[[bin]]
+name = "onethu-harness"
+path = "src/main.rs"
+
+[dependencies]
+onethu-harness-core = { path = "../core" }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

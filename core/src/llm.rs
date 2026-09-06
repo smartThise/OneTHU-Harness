@@ -1,7 +1,7 @@
 //! LLM 客户端（OpenAI 兼容 /chat/completions）：SSE 流式 + 工具调用增量累计
 //! + usage 取数；非流式回退；逐块回调驱动（R4 实时渲染），打断标志逐块检查。
 
-use crate::conn::{interrupt_take, Conn};
+use crate::host::Host;
 use crate::usage::ApiUsage;
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -68,8 +68,7 @@ fn http_err(e: ureq::Error) -> LlmError {
 
 /// 一轮对话（流式或非流式由 cfg.stream 决定）
 pub fn chat_turn(
-    conn: &mut Conn,
-    seq: &mut u64,
+    h: &mut dyn Host,
     cfg: &crate::config::Config,
     messages: &[crate::session::Msg],
     tools: &[Value],
@@ -88,10 +87,7 @@ pub fn chat_turn(
     if cfg.stream {
         body["stream_options"] = json!({ "include_usage": true });
     }
-    if conn
-        .call(seq, "log", "log", json!([format!("[harness] LLM ← {} ({} msgs, stream={})", cfg.model, messages.len(), cfg.stream)]))
-        .is_err()
-    {}
+let _ = h.call("log", "log", json!([format!("[harness] LLM \u{2190} {} ({} msgs, stream={})", cfg.model, messages.len(), cfg.stream)]));
     let resp = agent()
         .post(&url)
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
@@ -102,7 +98,7 @@ pub fn chat_turn(
     if cfg.stream {
         let ctype = resp.content_type().to_string();
         if ctype.contains("event-stream") {
-            return stream_turn(resp, hooks);
+            return stream_turn(resp, hooks, h);
         }
         // 端点不支持流式却没报错：按普通 JSON 解析
         let v: Value = resp.into_json().map_err(|e| LlmError { message: format!("响应解析失败：{e}") })?;
@@ -140,7 +136,7 @@ fn parse_completion(v: Value) -> Result<Turn, LlmError> {
 }
 
 /// SSE 流解析：逐块回调 delta/think；tool_calls 按 index 增量拼接
-fn stream_turn(resp: ureq::Response, hooks: &mut Hooks) -> Result<Turn, LlmError> {
+fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<Turn, LlmError> {
     let reader = resp.into_reader();
     let mut br = std::io::BufReader::new(reader);
     let mut line = String::new();
@@ -152,7 +148,7 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks) -> Result<Turn, LlmError
 
     loop {
         // 打断：SSE 逐块检查（R4）
-        if interrupt_take() {
+        if h.interrupted() {
             return Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage });
         }
         line.clear();

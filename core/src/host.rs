@@ -1,50 +1,55 @@
-//! 宿主连接层：stdin 读取线程 + JSON-RPC 消息分发 + onethu.call 请求配对。
-//!
-//! 线程模型（避开 std 锁不可重入的死锁坑，见接口指南 §8.3）：
-//! - 读线程独占 stdin，逐行解析后推入 mpsc 通道；「interrupt」在读取侧立即
-//!   置位全局打断标志——即使主循环正阻塞在 LLM SSE 流上，打断也毫秒级生效；
-//! - 主循环（含 agent 工具循环）只从通道取消息。onethu.call 的应答按请求 id
-//!   配对；等待期间抵达的其他消息按类型暂存，绝不丢失。
+//! 宿主边界抽象：核心 crate 只面向 `Host`（数据调用 + 打断）与 `Emit`（通知）。
+//! - stdio sidecar（bin/）：`StdioHost` + `StdioEmit`——JSON-RPC over stdin/stdout；
+//! - App 内嵌（OneTHU src-tauri）：`TauriHost` + `TauriEmit`——事件桥到 webview 门面。
+//! 两个实现都不在核心 crate 内，核心保持平台无关（Android 可编译）。
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
-/// 全局打断标志（R4）：读线程置位，agent 循环与 SSE 流逐块检查
-pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
-
-pub fn interrupt_reset() {
-    INTERRUPTED.store(false, Ordering::SeqCst);
+/// 数据面：onethu.* 原子调用（权限门禁在宿主侧）+ 打断标志
+pub trait Host {
+    fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String>;
+    fn interrupted(&self) -> bool;
+    /// 一轮 run 开始时清打断标志（stdio 侧实现；内嵌侧由宿主管理）
+    fn reset_interrupt(&self) {}
 }
 
-pub fn interrupt_take() -> bool {
-    INTERRUPTED.swap(false, Ordering::SeqCst)
+/// 通知面：progress / log 等（实现须可在多线程上下文调用）
+pub trait Emit {
+    fn notify(&self, method: &str, params: Value);
 }
 
-/// 主循环可见的消息
+/* ═══════════════ stdio 实现 ═══════════════ */
+
 pub enum Incoming {
-    /// 宿主请求（activate / run / dispose）
     Request { id: Value, method: String, params: Value },
-    /// 宿主通知
     Notify { method: String, params: Value },
-    /// onethu.call 的应答（call() 内部消化，主循环层见不到）
     Response { id: u64, ok: bool, value: Value },
 }
 
-pub struct Conn {
+pub struct StdioHost {
     rx: mpsc::Receiver<String>,
-    /// call() 等待期间抵达的其他应答（防御性暂存，供后续 call 认领）
     orphans: HashMap<u64, Result<Value, String>>,
-    /// call() 等待期间抵达的宿主请求（如 dispose）：暂存，主循环事后补处理
     deferred: Vec<(Value, String, Value)>,
+    seq: u64,
+    interrupt: Arc<AtomicBool>,
 }
 
-impl Conn {
-    /// 启动 stdin 读线程，返回连接句柄
-    pub fn spawn_reader() -> Conn {
+/// 通知到达时的回调：宿主主循环用它收「call 期间抵达的宿主请求」
+pub type Deferred = Vec<(Value, String, Value)>;
+
+impl StdioHost {
+    /// 启动 stdin 读线程，返回主机句柄。
+    /// interrupt 快路径：读线程看到 interrupt 立即置标志——主循环哪怕阻塞在
+    /// LLM SSE 流上，打断也毫秒级生效（agent 循环逐块检查）。
+    pub fn spawn() -> StdioHost {
         let (tx, rx) = mpsc::channel::<String>();
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let flag = interrupt.clone();
         std::thread::spawn(move || {
             let stdin = std::io::stdin();
             let mut lock = stdin.lock(); // 读线程全程唯一锁
@@ -59,39 +64,23 @@ impl Conn {
                 if trimmed.is_empty() {
                     continue;
                 }
-                // 快路径：interrupt 不进队列直接置标志（主循环可能正卡在 SSE 读上）
                 if trimmed.contains("\"method\":\"interrupt\"") {
-                    INTERRUPTED.store(true, Ordering::SeqCst);
+                    flag.store(true, Ordering::SeqCst);
                 }
                 if tx.send(trimmed.to_string()).is_err() {
                     break;
                 }
             }
         });
-        Conn { rx, orphans: HashMap::new(), deferred: Vec::new() }
+        StdioHost { rx, orphans: HashMap::new(), deferred: Vec::new(), seq: 1000, interrupt }
     }
 
-    /// 写一行 JSON 到 stdout（唯一出口）
-    pub fn send(v: &Value) {
-        use std::io::Write;
-        let mut s = serde_json::to_string(v).unwrap_or_default();
-        s.push('\n');
-        let out = std::io::stdout();
-        let mut h = out.lock();
-        let _ = h.write_all(s.as_bytes());
-        let _ = h.flush();
+    pub fn reply_ok(&self, id: &Value, result: Value) {
+        send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
 
-    pub fn notify(method: &str, params: Value) {
-        Self::send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }));
-    }
-
-    pub fn reply_ok(id: &Value, result: Value) {
-        Self::send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-    }
-
-    pub fn reply_err(id: &Value, message: &str) {
-        Self::send(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }));
+    pub fn reply_err(&self, id: &Value, message: &str) {
+        send(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }));
     }
 
     /// 取下一条可见消息（阻塞）。
@@ -99,10 +88,10 @@ impl Conn {
         loop {
             let raw = match self.rx.recv() {
                 Ok(m) => m,
-                Err(_) => std::process::exit(0), // stdin 关闭 = 宿主已走，自行了断
+                Err(_) => std::process::exit(0), // stdin 关闭 = 宿主已走
             };
             let Ok(msg) = serde_json::from_str::<Value>(&raw) else {
-                continue; // 非 JSON 行忽略
+                continue;
             };
             if let Some(method) = msg.get("method").and_then(|m| m.as_str()).map(String::from) {
                 if method == "interrupt" {
@@ -114,7 +103,6 @@ impl Conn {
                     _ => return Incoming::Notify { method, params },
                 }
             }
-            // onethu.call 应答
             if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
                 let out = if let Some(err) = msg.get("error") {
                     Err(err
@@ -131,14 +119,17 @@ impl Conn {
         }
     }
 
-    /// 发起一次 onethu.call 并等待配对应答。等待期间：
-    /// - 其他 id 的应答 → 暂存 orphans（供后续 call 认领）；
-    /// - 宿主请求 → 暂存 deferred（主循环在 run 结束后补处理）；
-    /// - 通知 → 忽略（interrupt 标志已由读线程置位）。
-    pub fn call(&mut self, seq: &mut u64, ns: &str, method: &str, args: Value) -> Result<Value, String> {
-        *seq += 1;
-        let rid = *seq;
-        Self::send(&json!({
+    /// call() 期间暂存的宿主请求（如 dispose），主循环事后补处理
+    pub fn take_deferred(&mut self) -> Deferred {
+        std::mem::take(&mut self.deferred)
+    }
+}
+
+impl Host for StdioHost {
+    fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String> {
+        self.seq += 1;
+        let rid = self.seq;
+        send(&json!({
             "jsonrpc": "2.0", "id": rid,
             "method": "onethu.call",
             "params": { "ns": ns, "method": method, "args": args }
@@ -160,10 +151,31 @@ impl Conn {
         }
     }
 
-    /// 主循环补处理 call() 期间暂存的宿主请求
-    pub fn take_deferred(&mut self) -> Vec<(Value, String, Value)> {
-        std::mem::take(&mut self.deferred)
+    fn interrupted(&self) -> bool {
+        self.interrupt.load(Ordering::SeqCst)
     }
+
+    fn reset_interrupt(&self) {
+        self.interrupt.store(false, Ordering::SeqCst);
+    }
+}
+
+pub struct StdioEmit;
+
+impl Emit for StdioEmit {
+    fn notify(&self, method: &str, params: Value) {
+        send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+    }
+}
+
+fn send(v: &Value) {
+    use std::io::Write;
+    let mut s = serde_json::to_string(v).unwrap_or_default();
+    s.push('\n');
+    let out = std::io::stdout();
+    let mut h = out.lock();
+    let _ = h.write_all(s.as_bytes());
+    let _ = h.flush();
 }
 
 fn value_to_msg(v: &Value) -> String {

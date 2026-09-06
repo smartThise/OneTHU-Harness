@@ -6,6 +6,7 @@
 //! - 上下文裁剪：超预算先截断旧工具结果、再丢最老消息（保持 tool 配对完整）。
 
 use crate::config::est_tokens;
+use crate::host::Host;
 use crate::usage::Usage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -95,15 +96,15 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn load(conn: &mut crate::conn::Conn, seq: &mut u64) -> Store {
-        let raw: Value = conn.call(seq, "storage", "get", serde_json::json!([STORE_KEY])).unwrap_or(Value::Null);
+    pub fn load(h: &mut dyn Host) -> Store {
+        let raw: Value = h.call("storage", "get", serde_json::json!([STORE_KEY])).unwrap_or(Value::Null);
         match raw {
             Value::Null => Store { v: 1, ..Default::default() },
             v => serde_json::from_value(v).unwrap_or_default(),
         }
     }
 
-    pub fn save(&self, conn: &mut crate::conn::Conn, seq: &mut u64) {
+    pub fn save(&self, h: &mut dyn Host) {
         let payload = match serde_json::to_value(self) {
             Ok(v) => v,
             Err(_) => return,
@@ -134,7 +135,7 @@ impl Store {
                 None => break,
             }
         }
-        let _ = conn.call(seq, "storage", "set", serde_json::json!([STORE_KEY, payload]));
+        let _ = h.call("storage", "set", serde_json::json!([STORE_KEY, payload]));
     }
 
     pub fn active_mut(&mut self) -> Option<&mut Session> {

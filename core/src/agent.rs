@@ -3,24 +3,24 @@
 //! delete_session、export_session、import_session、usage_report、selftest。
 
 use crate::config::{self, est_tokens, now_line, Config};
-use crate::conn::{interrupt_take, Conn};
+use crate::host::{Emit, Host};
 use crate::llm::{self, Hooks};
 use crate::session::{self, Msg, PendingAction, Store};
 use crate::tools::{self, ToolOut, Ctx};
 use crate::usage::{self, Usage};
 use serde_json::{json, Value};
 
-fn progress(kind: &str, text: &str, payload: Option<Value>) {
+fn progress(emit: &dyn Emit, kind: &str, text: &str, payload: Option<Value>) {
     let mut p = json!({ "text": text, "kind": kind });
     if let Some(pl) = payload {
         p["payload"] = pl;
     }
-    Conn::notify("progress", p);
+    emit.notify("progress", p);
 }
 
-fn usage_progress(sess: &session::Session, store: &Store, cfg: &Config) {
+fn usage_progress(emit: &dyn Emit, sess: &session::Session, store: &Store, cfg: &Config) {
     let budget_left = (cfg.budget_usd - store.totals_cost_usd).max(0.0);
-    progress(
+    progress(emit,
         "usage",
         &usage::fmt_usd(store.totals_cost_usd),
         Some(json!({
@@ -94,9 +94,9 @@ fn total_usage_payload(store: &Store, cfg: &Config) -> Value {
 }
 
 /// chat 命令主入口：返回 dock 约定的 JSON 结构
-pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
+pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
     // 设置每次取最新（R3：用户在管理页改完即生效）
-    let settings: Value = match conn.call(seq, "settings", "get", json!([])) {
+    let settings: Value = match h.call("settings", "get", json!([])) {
         Ok(v) => v,
         Err(e) => return json!({ "type": "chat", "ok": false, "error": format!("读取设置失败：{e}") }),
     };
@@ -106,7 +106,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
         return json!({ "type": "chat", "ok": false, "error": "尚未配置 API Key：请到 设置→插件→OneTHU Harness 展开卡片填写后重试。" });
     }
 
-    let mut store = Store::load(conn, seq);
+    let mut store = Store::load(h);
     let title_from = input.chars().take(24).collect::<String>();
     {
         let s = store.ensure_active();
@@ -130,12 +130,12 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
                 sess.messages.push(Msg::user("取消"));
                 sess.messages.push(Msg::assistant(&ans));
                 sess.updated_at = session::now_ms();
-                store.save(conn, seq);
+                store.save(h);
                 return json!({ "type": "chat", "ok": true, "answer": ans, "sessionId": sess_id, "confirm": Value::Null });
             }
-            progress("tool", &format!("执行已确认：{}", p.summary), None);
+            progress(emit, "tool", &format!("执行已确认：{}", p.summary), None);
             let outcome = {
-                let mut ctx = Ctx { conn, seq };
+                let mut ctx = Ctx { h };
                 tools::execute(&mut ctx, &p.tool, &p.args, true)
             };
             let (ans, ok) = match outcome {
@@ -149,7 +149,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
             sess.messages.push(Msg::assistant(&ans));
             sess.trace.push(format!("✔ {}", p.summary));
             sess.updated_at = session::now_ms();
-            store.save(conn, seq);
+            store.save(h);
             return json!({ "type": "chat", "ok": true, "answer": ans, "sessionId": sess_id, "executed": ok, "confirm": Value::Null });
         }
         // 用户没接茬而说了别的 → 清 pending，正常进 agent 循环
@@ -195,7 +195,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
     let mut step: u32 = 0;
 
     loop {
-        if interrupt_take() {
+        if h.interrupted() {
             interrupted = true;
             answer = "（已打断）".to_string();
             break;
@@ -212,7 +212,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
         }
         session::trim_history(&mut msgs, cfg.max_context);
 
-        progress(
+        progress(emit,
             "notice",
             &format!("思考中…（第 {step} 步）"),
             Some(json!({ "step": step, "total": cfg.max_steps })),
@@ -221,22 +221,22 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
         // 流式钩子（R4）：回答增量直推 dock；思考增量缓冲到 ~160 字再推
         let think_buf = std::cell::RefCell::new(String::new());
         let mut hooks = Hooks {
-            on_delta: Box::new(|d: &str| progress("delta", d, None)),
+            on_delta: Box::new(|d: &str| progress(emit, "delta", d, None)),
             on_think: Box::new(|d: &str| {
                 let mut b = think_buf.borrow_mut();
                 b.push_str(d);
                 if b.chars().count() >= 160 {
-                    progress("think", &b.clone(), None);
+                    progress(emit, "think", &b.clone(), None);
                     b.clear();
                 }
             }),
         };
-        let turn = llm::chat_turn(conn, seq, &cfg, &msgs, &tools_schema, &mut hooks)
+        let turn = llm::chat_turn(h, &cfg, &msgs, &tools_schema, &mut hooks)
             .map_err(|e| friendly_llm(e.message));
         {
             let b = think_buf.borrow();
             if !b.is_empty() {
-                progress("think", &b, None);
+                progress(emit, "think", &b, None);
             }
         }
 
@@ -246,7 +246,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
                 let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
                 sess.messages = snapshot.clone();
                 sess.trace.pop();
-                store.save(conn, seq);
+                store.save(h);
                 return json!({ "type": "chat", "ok": false, "error": e, "sessionId": sess_id });
             }
         };
@@ -294,14 +294,14 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
         let mut confirm: Option<(String, String, Value)> = None;
         let mut answered: Vec<String> = Vec::new();
         for tc in &turn.tool_calls {
-            if interrupt_take() {
+            if h.interrupted() {
                 interrupted = true;
                 break;
             }
             let args: Value = serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({ "_raw": tc.arguments }));
-            progress("tool", &format!("🔧 {}", tc.name), Some(json!({ "step": step, "total": cfg.max_steps })));
+            progress(emit, "tool", &format!("🔧 {}", tc.name), Some(json!({ "step": step, "total": cfg.max_steps })));
             let outcome = {
-                let mut ctx = Ctx { conn, seq };
+                let mut ctx = Ctx { h };
                 tools::execute(&mut ctx, &tc.name, &args, false)
             };
             match outcome {
@@ -311,7 +311,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
                     sess.trace.push(format!("🔧 {} → {}B", tc.name, text.len()));
                     answered.push(tc.id.clone());
                     let brief: String = text.chars().take(140).collect();
-                    progress("tool", &brief, None);
+                    progress(emit, "tool", &brief, None);
                 }
                 Ok(ToolOut::ConfirmNeeded { tool, args, summary }) => {
                     let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
@@ -328,7 +328,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
                     sess.messages.push(Msg::tool_result(&tc.id, &format!("错误：{e}")));
                     sess.trace.push(format!("✗ {}：{}", tc.name, e));
                     answered.push(tc.id.clone());
-                    progress("tool", &format!("✗ {}：{}", tc.name, e), None);
+                    progress(emit, "tool", &format!("✗ {}：{}", tc.name, e), None);
                 }
             }
             if confirm.is_some() {
@@ -348,7 +348,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
             let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
             sess.updated_at = session::now_ms();
         }
-        store.save(conn, seq);
+        store.save(h);
 
         if let Some((tool, summary, args)) = confirm {
             let ans = format!("请确认以下操作（回复「确认」执行，回复「取消」放弃）：\n{}", summary);
@@ -356,7 +356,7 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
             sess.pending = Some(PendingAction { tool, args, summary: summary.clone() });
             sess.messages.push(Msg::assistant(&ans)); // 模板回答，不烧 token
             sess.updated_at = session::now_ms();
-            store.save(conn, seq);
+            store.save(h);
             return json!({
                 "type": "chat", "ok": true, "answer": ans, "sessionId": sess_id,
                 "confirm": { "summary": summary },
@@ -381,10 +381,10 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
         store.totals.add(&run_usage);
         store.totals_cost_usd += run_cost;
     }
-    store.save(conn, seq);
+    store.save(h);
     {
         let sess = store.sessions.iter().find(|s| s.id == sess_id).unwrap();
-        usage_progress(sess, &store, &cfg);
+        usage_progress(emit, sess, &store, &cfg);
     }
     json!({
         "type": "chat", "ok": true, "answer": answer, "interrupted": interrupted,
@@ -397,16 +397,16 @@ pub fn chat(conn: &mut Conn, seq: &mut u64, input: &str) -> Value {
 
 /* ── 其余 dock 命令 ── */
 
-pub fn new_session(conn: &mut Conn, seq: &mut u64) -> Value {
-    let mut store = Store::load(conn, seq);
+pub fn new_session(h: &mut dyn Host) -> Value {
+    let mut store = Store::load(h);
     let s = store.new_session("新会话");
     let id = s.id.clone();
-    store.save(conn, seq);
+    store.save(h);
     json!({ "type": "session", "ok": true, "sessionId": id, "sessions": session_list(&store) })
 }
 
-pub fn list_sessions(conn: &mut Conn, seq: &mut u64) -> Value {
-    let store = Store::load(conn, seq);
+pub fn list_sessions(h: &mut dyn Host) -> Value {
+    let store = Store::load(h);
     json!({ "type": "sessions", "ok": true, "active": store.active, "sessions": session_list(&store) })
 }
 
@@ -422,27 +422,27 @@ fn session_list(store: &Store) -> Vec<Value> {
         .collect()
 }
 
-pub fn switch_session(conn: &mut Conn, seq: &mut u64, id: &str) -> Value {
-    let mut store = Store::load(conn, seq);
+pub fn switch_session(h: &mut dyn Host, id: &str) -> Value {
+    let mut store = Store::load(h);
     let ok = store.switch(id);
     if ok {
-        store.save(conn, seq);
+        store.save(h);
     }
     json!({ "type": "session", "ok": ok, "sessionId": if ok { json!(id) } else { Value::Null }, "sessions": session_list(&store) })
 }
 
-pub fn delete_session(conn: &mut Conn, seq: &mut u64, id: &str) -> Value {
-    let mut store = Store::load(conn, seq);
+pub fn delete_session(h: &mut dyn Host, id: &str) -> Value {
+    let mut store = Store::load(h);
     let ok = store.delete(id);
     if ok {
-        store.save(conn, seq);
+        store.save(h);
     }
     json!({ "type": "sessions", "ok": ok, "active": store.active, "sessions": session_list(&store) })
 }
 
 /// 导出完整会话上下文（R5：JSON）
-pub fn export_session(conn: &mut Conn, seq: &mut u64, id: &str) -> Value {
-    let store = Store::load(conn, seq);
+pub fn export_session(h: &mut dyn Host, id: &str) -> Value {
+    let store = Store::load(h);
     let target = if id.is_empty() { store.active.clone() } else { id.to_string() };
     match store.sessions.iter().find(|s| s.id == target) {
         Some(s) => json!({ "type": "export", "ok": true, "sessionId": s.id, "title": s.title, "json": serde_json::to_string(&s).unwrap_or_default() }),
@@ -451,8 +451,8 @@ pub fn export_session(conn: &mut Conn, seq: &mut u64, id: &str) -> Value {
 }
 
 /// 导入完整会话上下文（R5：JSON）
-pub fn import_session(conn: &mut Conn, seq: &mut u64, text: &str) -> Value {
-    let mut store = Store::load(conn, seq);
+pub fn import_session(h: &mut dyn Host, text: &str) -> Value {
+    let mut store = Store::load(h);
     match serde_json::from_str::<session::Session>(text.trim()) {
         Ok(mut s) => {
             s.id = format!("i{}", session::now_ms());
@@ -460,15 +460,15 @@ pub fn import_session(conn: &mut Conn, seq: &mut u64, text: &str) -> Value {
             let title = s.title.clone();
             store.sessions.push(s);
             store.active = store.sessions.last().unwrap().id.clone();
-            store.save(conn, seq);
+            store.save(h);
             json!({ "type": "session", "ok": true, "sessionId": store.active.clone(), "title": title, "sessions": session_list(&store) })
         }
         Err(e) => json!({ "type": "session", "ok": false, "error": format!("导入失败：{e}") }),
     }
 }
 
-pub fn usage_report(conn: &mut Conn, seq: &mut u64) -> Value {
-    let store = Store::load(conn, seq);
+pub fn usage_report(h: &mut dyn Host) -> Value {
+    let store = Store::load(h);
     json!({
         "type": "usage", "ok": true,
         "totals": { "prompt": store.totals.prompt, "completion": store.totals.completion,

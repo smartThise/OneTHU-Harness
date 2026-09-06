@@ -9,7 +9,7 @@
 //! ④ **结果聚合压缩**——座位按区域汇总余位、流水汇总收支，控制回灌给模型的体积。
 
 use crate::config::{date_choice, resolve_date, resolve_hhmm, today};
-use crate::conn::Conn;
+use crate::host::Host;
 use chrono::Duration;
 use serde_json::{json, Value};
 
@@ -21,8 +21,7 @@ pub struct ToolDef {
 }
 
 pub struct Ctx<'a> {
-    pub conn: &'a mut Conn,
-    pub seq: &'a mut u64,
+    pub h: &'a mut dyn Host,
 }
 
 pub enum ToolOut {
@@ -33,9 +32,7 @@ pub enum ToolOut {
 }
 
 fn host(ctx: &mut Ctx, ns: &str, method: &str, args: Value) -> Result<Value, String> {
-    ctx.conn
-        .call(ctx.seq, ns, method, args)
-        .map_err(|e| friendly(e))
+    ctx.h.call(ns, method, args).map_err(friendly)
 }
 
 fn friendly(e: String) -> String {

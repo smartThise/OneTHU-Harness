@@ -19,7 +19,9 @@ OneTHU 宿主（Tauri/React）                     本插件（本仓库，独�
                                                 └─────────────────────────────┘
 ```
 
-- **LLM 调用、工具编排、上下文管理、token 统计全部在 Rust 进程内**（`src/`）；
+- **LLM 调用、工具编排、上下文管理、token 统计全部在 Rust 进程内**（`core/` 库 crate）；
+  stdio sidecar（`bin/`，桌面端拉起的独立进程）与 App 内嵌宿主（OneTHU src-tauri，
+  Android 无进程执行权限，核心直接编进 App）共用同一核心；
   webview 侧只有宿主胶水（OneTHU 仓库内的通用对话面板，不含业务逻辑）。
 - 插件经宿主 `onethu.call` 访问校园数据：**权限门禁与 JS 插件完全一致**，
   会话自愈（失登自动重建）、45s 超时等都由宿主承担。
