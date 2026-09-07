@@ -115,6 +115,138 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_learn_courses",
+            desc: "查网络学堂课程列表（semesterId 缺省=当前学期；跨学期传学期 id，可先 query_learn_semesters）",
+            params: p(json!({ "semesterId": {"type": "string"} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_learn_semesters",
+            desc: "查网络学堂学期 id 列表（跨学期查询用）",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_learn_homework",
+            desc: "查网络学堂作业（含课程名/状态/截止时间；semesterId 缺省=当前学期）",
+            params: p(json!({ "semesterId": {"type": "string"} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_learn_notifications",
+            desc: "查网络学堂课程公告（semesterId 缺省=当前学期）",
+            params: p(json!({ "semesterId": {"type": "string"} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_learn_files",
+            desc: "查网络学堂某课程文件列表（course_keyword=课程名关键词，如 计算机组成）",
+            params: p(json!({ "course_keyword": {"type": "string"} }), &["course_keyword"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_learn_bbs",
+            desc: "查网络学堂讨论区：course_keyword 定课程 → 返回版面；threadId 可选直达帖子及回帖",
+            params: p(json!({
+                "course_keyword": {"type": "string"},
+                "bqId": {"type": "string"},
+                "threadId": {"type": "string"}
+            }), &["course_keyword"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_venue_scenes",
+            desc: "查体育场馆场景列表（uuid 供场地查询/跳转）",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_venue_slots",
+            desc: "查体育场馆某天可约场地（sceneUuid 必填；date=YYYY-MM-DD；classTypeUuid 可选楼栋/类型过滤）",
+            params: p(json!({
+                "sceneUuid": {"type": "string"},
+                "date": {"type": "string"},
+                "classTypeUuid": {"type": "string"}
+            }), &["sceneUuid", "date"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_venue_records",
+            desc: "查我的体育场馆预约记录（含 resvUuid，取消用）",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "cancel_venue_reservation",
+            desc: "取消一条体育场馆预约（执行前会请用户确认）",
+            params: p(json!({ "resvUuid": {"type": "string"} }), &["resvUuid"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "jump_venue_booking",
+            desc: "打开体育系统官方预约页（直达所选场馆；预约在官方页面由用户手动完成）",
+            params: p(json!({ "sceneUuid": {"type": "string"} }), &["sceneUuid"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_kongjian",
+            desc: "查宿舍公共空间（共享空间预约页：可约空间/时段；date=YYYY-MM-DD，spaceId/roomId 可选）",
+            params: p(json!({
+                "date": {"type": "string"},
+                "spaceId": {"type": "string"},
+                "roomId": {"type": "string"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_kongjian_my",
+            desc: "查我的宿舍公共空间预约记录",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "book_kongjian",
+            desc: "预约宿舍公共空间（执行前会请用户确认；需 bookUrl/sid/tel，name/other 可选）",
+            params: p(json!({
+                "bookUrl": {"type": "string"},
+                "name": {"type": "string"},
+                "sid": {"type": "string"},
+                "tel": {"type": "string"},
+                "other": {"type": "string"}
+            }), &["bookUrl", "sid", "tel"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "cancel_kongjian",
+            desc: "取消一条宿舍公共空间预约（执行前会请用户确认）",
+            params: p(json!({ "target": {"type": "string"} }), &["target"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "query_xk_catalog",
+            desc: "查本科选课开课目录（semester 如 2026-2027-1，缺省=当前；q 可选课名/课号/教师关键词本地过滤）",
+            params: p(json!({
+                "semester": {"type": "string"},
+                "q": {"type": "string"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_xk_selected",
+            desc: "查我的已选课程（semester 缺省=当前）",
+            params: p(json!({ "semester": {"type": "string"} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_xk_reviews",
+            desc: "查选课社区课程评价（独立可用，无需进入选课）：course=课名关键词，teacher 可选教师名过滤",
+            params: p(json!({
+                "course": {"type": "string"},
+                "teacher": {"type": "string"}
+            }), &["course"]),
+            confirm: false,
+        },
+        ToolDef {
             name: "query_coursex",
             desc: "查 CourseX（课程共享计划）任意学期某门课的时间地点：q=课名/教师关键词；semester 缺省=当前学期（学期 id 列表先查一次会返回）",
             params: p(json!({
@@ -379,6 +511,23 @@ fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, Stri
                 s(rec, "end")
             ))
         }
+        "cancel_venue_reservation" => {
+            let recs = arr_of(&host(ctx, "venue", "myRecords", json!([1]))?);
+            let u = s(args, "resvUuid");
+            let rec = recs.iter().find(|r| s(r, "resvUuid") == u).ok_or("resvUuid 不在最近记录中，请先 query_venue_records")?;
+            Ok(format!("取消体育场馆预约：{} {}（{}）", s(rec, "scene"), s(rec, "time"), s(rec, "status")))
+        }
+        "book_kongjian" => Ok(format!(
+            "预约宿舍公共空间：{}（联系人 {}，电话 {}）",
+            s(args, "bookUrl"), s(args, "name"), s(args, "tel")
+        )),
+        "cancel_kongjian" => {
+            let recs = arr_of(&host(ctx, "kongjian", "my", json!([]))?);
+            let t = s(args, "target");
+            let rec = recs.iter().find(|r| s(r, "cancelTarget") == t || s(r, "spaceName").contains(&t))
+                .ok_or("未找到匹配的预约记录，请先 query_kongjian_my")?;
+            Ok(format!("取消公共空间预约：{}（{}）", s(rec, "spaceName"), s(rec, "time")))
+        }
         _ => Err(format!("未知确认工具：{name}")),
     }
 }
@@ -477,6 +626,151 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 })
                 .collect();
             json!({ "count": txs.len(), "netAmount": total, "note": "amount 正负为收支方向", "rows": rows, "truncated": txs.len() > 90 })
+        }
+        "query_learn_semesters" => json!({ "semesters": host(ctx, "learn", "semesters", json!([]))? }),
+        "query_learn_courses" => {
+            let sem = s(args, "semesterId");
+            let out = if sem.is_empty() {
+                host(ctx, "learn", "courses", json!([null]))?
+            } else {
+                host(ctx, "learn", "courses", json!([sem]))?
+            };
+            let rows: Vec<Value> = arr_of(&out.get("courses").cloned().unwrap_or_else(|| json!([])))
+                .iter()
+                .map(|c| json!({ "id": s(c, "id"), "name": s(c, "name"), "teacher": s(c, "teacher"), "semester": out.get("semester").cloned().unwrap_or(json!("")) }))
+                .collect();
+            json!({ "semester": out.get("semester").cloned().unwrap_or(json!("")), "count": rows.len(), "rows": rows })
+        }
+        "query_learn_homework" => {
+            let sem = s(args, "semesterId");
+            let out = if sem.is_empty() { host(ctx, "learn", "homework", json!([null]))? } else { host(ctx, "learn", "homework", json!([sem]))? };
+            let rows: Vec<Value> = arr_of(&out)
+                .iter()
+                .take(30)
+                .map(|h| json!({ "course": s(h, "courseName"), "title": s(h, "title"), "due": s(h, "endTime"), "status": s(h, "status"), "submitted": h.get("submitted").cloned().unwrap_or(json!(false)) }))
+                .collect();
+            json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 30 })
+        }
+        "query_learn_notifications" => {
+            let sem = s(args, "semesterId");
+            let out = if sem.is_empty() { host(ctx, "learn", "notifications", json!([null]))? } else { host(ctx, "learn", "notifications", json!([sem]))? };
+            let rows: Vec<Value> = arr_of(&out)
+                .iter()
+                .take(20)
+                .map(|n| json!({ "course": s(n, "courseName"), "title": s(n, "title"), "time": s(n, "time"), "hasDetail": s(n, "content") != "" }))
+                .collect();
+            json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 20 })
+        }
+        "query_learn_files" => {
+            let kw = s(args, "course_keyword");
+            let courses = arr_of(&host(ctx, "learn", "courses", json!([null]))?.get("courses").cloned().unwrap_or_else(|| json!([])));
+            let hit = courses.iter().find(|c| s(c, "name").contains(&kw))
+                .ok_or_else(|| format!("找不到课程「{kw}」；可用：{}", courses.iter().map(|c| s(c, "name")).collect::<Vec<_>>().join("、")))?;
+            let files = host(ctx, "learn", "files", json!([s(hit, "id")]))?;
+            let rows: Vec<Value> = arr_of(&files)
+                .iter()
+                .take(25)
+                .map(|f| json!({ "title": s(f, "title"), "size": s(f, "size"), "time": s(f, "time") }))
+                .collect();
+            json!({ "course": s(hit, "name"), "count": rows.len(), "rows": rows })
+        }
+        "query_learn_bbs" => {
+            let kw = s(args, "course_keyword");
+            let courses = arr_of(&host(ctx, "learn", "courses", json!([null]))?.get("courses").cloned().unwrap_or_else(|| json!([])));
+            let hit = courses.iter().find(|c| s(c, "name").contains(&kw))
+                .ok_or_else(|| format!("找不到课程「{kw}」"))?;
+            let wlkcid = s(hit, "id");
+            let bq = s(args, "bqId");
+            let tid = s(args, "threadId");
+            if tid.is_empty() && bq.is_empty() {
+                let boards = host(ctx, "learn", "bbsBoards", json!([wlkcid]))?;
+                json!({ "course": s(hit, "name"), "boards": boards, "note": "带 bqId 查帖子列表；再带 threadId 看帖子与回帖" })
+            } else if tid.is_empty() {
+                let t = host(ctx, "learn", "bbsThreads", json!([wlkcid, { "bqid": bq }]))?;
+                json!({ "course": s(hit, "name"), "total": t.get("total").cloned().unwrap_or(json!(0)), "threads": t.get("threads").cloned().unwrap_or_else(|| json!([])), "note": "带 threadId 看帖子内容与回帖" })
+            } else {
+                let detail = host(ctx, "learn", "bbsThread", json!([wlkcid, tid, if bq.is_empty() { json!(null) } else { json!(bq) }]))?;
+                let posts = host(ctx, "learn", "bbsPosts", json!([wlkcid, tid, 1]))?;
+                json!({ "course": s(hit, "name"), "thread": detail, "postsPage1": posts })
+            }
+        }
+        "query_venue_scenes" => host(ctx, "venue", "scenes", json!([]))?,
+        "query_venue_slots" => {
+            let out = host(ctx, "venue", "currentPage", json!([{
+                "sceneUuid": s(args, "sceneUuid"),
+                "reserveDate": s(args, "date"),
+                "classTypeUuid": s(args, "classTypeUuid"),
+            }]))?;
+            let rows: Vec<Value> = arr_of(&out)
+                .iter()
+                .take(30)
+                .map(|it| json!({ "siteUuid": s(it, "siteUuid"), "name": s(it, "siteName"), "status": s(it, "statusName"), "price": it.get("price").cloned().unwrap_or(json!(null)) }))
+                .collect();
+            json!({ "date": s(args, "date"), "count": rows.len(), "rows": rows, "note": "预约在官方页面完成（jump_venue_booking 跳转）；站内可取消已约记录" })
+        }
+        "query_venue_records" => {
+            let rows: Vec<Value> = arr_of(&host(ctx, "venue", "myRecords", json!([1]))?)
+                .iter()
+                .take(10)
+                .map(|r| json!({ "resvUuid": s(r, "resvUuid"), "scene": s(r, "sceneName"), "time": s(r, "beginTime"), "status": s(r, "statusName") }))
+                .collect();
+            json!({ "rows": rows })
+        }
+        "jump_venue_booking" => {
+            let url = host(ctx, "venue", "jump", json!([s(args, "sceneUuid")]))?;
+            json!({ "opened": true, "url": url, "note": "已打开官方预约页（系统浏览器）" })
+        }
+        "query_kongjian" => {
+            let out = host(ctx, "kongjian", "page", json!([{
+                "date": s(args, "date"), "spaceId": s(args, "spaceId"), "roomId": s(args, "roomId"),
+            }]))?;
+            json!(out)
+        }
+        "query_kongjian_my" => host(ctx, "kongjian", "my", json!([]))?,
+        "cancel_venue_reservation" => {
+            host(ctx, "venue", "cancel", json!([s(args, "resvUuid")]))?;
+            json!({ "cancelled": true, "resvUuid": s(args, "resvUuid") })
+        }
+        "book_kongjian" => {
+            let out = host(ctx, "kongjian", "book", json!([s(args, "bookUrl"), {
+                "name": s(args, "name"), "sid": s(args, "sid"), "tel": s(args, "tel"), "other": s(args, "other"),
+            }]))?;
+            json!({ "booked": true, "result": out })
+        }
+        "cancel_kongjian" => {
+            host(ctx, "kongjian", "cancel", json!([s(args, "target")]))?;
+            json!({ "cancelled": true, "target": s(args, "target") })
+        }
+        "query_xk_catalog" => {
+            let sem = s(args, "semester");
+            let mut out = if sem.is_empty() { host(ctx, "xk", "catalog", json!([null]))? } else { host(ctx, "xk", "catalog", json!([sem]))? };
+            let q = s(args, "q");
+            let mut rows: Vec<Value> = arr_of(&out)
+                .into_iter()
+                .filter(|c| q.is_empty() || s(c, "name").contains(&q) || s(c, "code").contains(&q) || s(c, "teacher").contains(&q))
+                .take(25)
+                .map(|c| json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": s(&c, "time"), "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") }))
+                .collect();
+            rows.sort_by(|a, b| s(&a, "code").cmp(&s(&b, "code")));
+            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25 });
+            out
+        }
+        "query_xk_selected" => {
+            let sem = s(args, "semester");
+            let out = if sem.is_empty() { host(ctx, "xk", "selected", json!([null]))? } else { host(ctx, "xk", "selected", json!([sem]))? };
+            let rows: Vec<Value> = arr_of(&out)
+                .iter()
+                .map(|c| json!({ "code": s(c, "code"), "name": s(c, "name"), "teacher": s(c, "teacher"), "time": s(c, "time"), "credits": c.get("credits").cloned().unwrap_or(json!(0)) }))
+                .collect();
+            json!({ "count": rows.len(), "rows": rows })
+        }
+        "query_xk_reviews" => {
+            let out = host(ctx, "xk", "reviews", json!([s(args, "course"), s(args, "teacher")]))?;
+            if out.is_null() {
+                json!({ "found": false, "note": "选课社区没有匹配该课名/教师的评价" })
+            } else {
+                out
+            }
         }
         "query_coursex" => {
             let q = s(args, "q");

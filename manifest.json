@@ -17,7 +17,12 @@
     "nav",
     "ui",
     "storage",
-    "net:external"
+    "net:external",
+    "learn:read",
+    "venue:read",
+    "venue:book",
+    "xk:read",
+    "kongjian:book"
   ],
   "settings": [
     {
