@@ -139,7 +139,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
                 tools::execute(&mut ctx, &p.tool, &p.args, true)
             };
             let (ans, ok) = match outcome {
-                Ok(ToolOut::Text(t)) => (format!("✅ 已执行：{}\n{}", p.summary, t), true),
+                Ok(ToolOut::Text(t)) => (format!("✅ 已执行：{}\n{}", p.summary, humanize_tool_text(&t)), true),
                 Ok(ToolOut::ConfirmNeeded { .. }) => (format!("已处理：{}", p.summary), true),
                 Err(e) => (format!("❌ 执行失败：{}\n操作未生效，可重试或换一个目标。", e), false),
             };
@@ -521,4 +521,34 @@ pub fn selftest() -> Value {
         "results": results, "today": t.to_string(),
         "estTokens": est_tokens("hello 你好")
     })
+}
+
+/// R10：确认执行的回复面向用户——工具结果 JSON 只提炼可读字段，不再整坨灌屏。
+/// 非结构化文本截断到 220 字。
+fn humanize_tool_text(t: &str) -> String {
+    let compact = match serde_json::from_str::<serde_json::Value>(t) {
+        Ok(v @ serde_json::Value::Object(_)) => {
+            let mut parts: Vec<String> = Vec::new();
+            for key in ["seat", "section", "time", "status", "cancelled", "kind", "date"] {
+                if let Some(x) = v.get(key).and_then(|x| x.as_str()) {
+                    if !x.is_empty() {
+                        parts.push(x.to_string());
+                    }
+                }
+            }
+            if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+        }
+        _ => None,
+    };
+    match compact {
+        Some(c) => c,
+        None => {
+            let n = t.chars().count();
+            if n > 220 {
+                format!("{}…（全文 {} 字略）", t.chars().take(220).collect::<String>(), n)
+            } else {
+                t.to_string()
+            }
+        }
+    }
 }
