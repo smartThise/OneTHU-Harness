@@ -224,10 +224,12 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_xk_catalog",
-            desc: "查本科选课开课目录——上课【时间】权威来源（time=星期节次(周次)；room 仅个别行有）。教室请用 query_coursex detail 或 query_learn_courses 的 timeLocation。semester 如 2026-2027-1，缺省=当前；q=课名/课号/教师关键词",
+            desc: "查本科选课开课目录（服务端搜索，秒回）——上课【时间】权威来源（time=星期节次(周次)）。教室请用 query_coursex detail 或 query_learn_courses 的 timeLocation。q=课名或课号；teacher=教师名（可选精确过滤）；semester 如 2026-2027-1 缺省=当前；page 翻页",
             params: p(json!({
                 "semester": {"type": "string"},
-                "q": {"type": "string"}
+                "q": {"type": "string"},
+                "teacher": {"type": "string"},
+                "page": {"type": "integer", "minimum": 1}
             }), &[]),
             confirm: false,
         },
@@ -742,28 +744,37 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             json!({ "cancelled": true, "target": s(args, "target") })
         }
         "query_xk_catalog" => {
-            let sem = s(args, "semester");
-            let mut out = if sem.is_empty() { host(ctx, "xk", "catalog", json!([null]))? } else { host(ctx, "xk", "catalog", json!([sem]))? };
+            // 服务端搜索（选课页查询框同款，每页 20 行秒回）——不再全量爬目录
+            //（getXkCatalog 最多 320 页，桥 5s 看门狗实录挂起）
             let q = s(args, "q");
-            let mut rows: Vec<Value> = arr_of(&out)
-                .into_iter()
-                .filter(|c| q.is_empty() || s(c, "name").contains(&q) || s(c, "code").contains(&q) || s(c, "teacher").contains(&q))
-                .take(25)
+            let is_code = !q.is_empty() && q.chars().all(|ch| ch.is_ascii_alphanumeric());
+            let mut out = host(ctx, "xk", "search", json!([{
+                "kcm": if is_code { json!(null) } else { json!(q) },
+                "kch": if is_code { json!(q) } else { json!(null) },
+                "teacher": s(args, "teacher"),
+                "semester": s(args, "semester"),
+                "page": args.get("page").and_then(|p| p.as_i64()).unwrap_or(1),
+            }]))?;
+            let rows: Vec<Value> = arr_of(out.get("rows").cloned().unwrap_or_else(|| json!([])))
+                .iter()
                 .map(|c| {
-                    // time 形如「星期二第4节(全周)二教403」——教室就是尾部 token，拆出来直给
-                    let time = s(&c, "time");
-                    // 优先用 core 拆好的 room；缺省再按「)」尾段兜底
-                    let mut room = s(&c, "room");
+                    let time = s(c, "time");
+                    let mut room = s(c, "room");
                     if room.is_empty() {
                         if let Some(i) = time.rfind(')') {
                             room = time[i + 1..].trim().to_string();
                         }
                     }
-                    json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") })
+                    json!({ "code": s(c, "code"), "seq": s(c, "seq"), "name": s(c, "name"), "teacher": s(c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(c, "teacherId") })
                 })
                 .collect();
-            rows.sort_by(|a, b| s(&a, "code").cmp(&s(&b, "code")));
-            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有，为空不代表没教室——教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查" });
+            out = json!({
+                "count": rows.len(),
+                "page": out.get("page").cloned().unwrap_or(json!(1)),
+                "hasMore": out.get("hasMore").cloned().unwrap_or(json!(false)),
+                "rows": rows,
+                "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有，为空不代表没教室——教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查；hasMore=true 可带 page 翻页",
+            });
             out
         }
         "query_xk_selected" => {
