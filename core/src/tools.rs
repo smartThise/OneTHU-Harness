@@ -224,7 +224,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_xk_catalog",
-            desc: "查本科选课开课目录——查某门课【上课教室/时间】首选这个（room 字段=教室，time=星期节次(周次)+教室）。semester 如 2026-2027-1，缺省=当前；q=课名/课号/教师关键词本地过滤",
+            desc: "查本科选课开课目录——上课【时间】权威来源（time=星期节次(周次)；room 仅个别行有）。教室请用 query_coursex detail 或 query_learn_courses 的 timeLocation。semester 如 2026-2027-1，缺省=当前；q=课名/课号/教师关键词",
             params: p(json!({
                 "semester": {"type": "string"},
                 "q": {"type": "string"}
@@ -248,7 +248,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_coursex",
-            desc: "查 CourseX（课程共享计划镜像，外校/跨学期视角）：q=课名/教师关键词。教室常缺录，查教室请用 query_xk_catalog",
+            desc: "查 CourseX（课程共享计划）：q=课名/教师关键词；detail=true 取前 3 条详情（details[].timeLocation=时间地点/教室）。查教室首选这个或网络学堂",
             params: p(json!({
                 "q": {"type": "string"},
                 "semester": {"type": "string"},
@@ -637,9 +637,9 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             };
             let rows: Vec<Value> = arr_of(&out.get("courses").cloned().unwrap_or_else(|| json!([])))
                 .iter()
-                .map(|c| json!({ "id": s(c, "id"), "name": s(c, "name"), "teacher": s(c, "teacher"), "semester": out.get("semester").cloned().unwrap_or(json!("")) }))
+                .map(|c| json!({ "id": s(c, "id"), "name": s(c, "name"), "teacher": s(c, "teacher"), "timeLocation": c.get("timeAndLocation").cloned().unwrap_or_else(|| json!([])) }))
                 .collect();
-            json!({ "semester": out.get("semester").cloned().unwrap_or(json!("")), "count": rows.len(), "rows": rows, "note": "semester=网络学堂自报当前学期（新学期课程可能未发布在此学期）；查不到时用 query_learn_semesters 拿列表，换 semesterId 再试" })
+            json!({ "semester": out.get("semester").cloned().unwrap_or(json!("")), "count": rows.len(), "rows": rows, "note": "timeLocation=上课时间地点（教室以这里和 CourseX 为权威来源）；semester=网络学堂自报当前学期（新学期课程可能未发布在此学期），查不到时用 query_learn_semesters 换 semesterId 再试" })
         }
         "query_learn_homework" => {
             let sem = s(args, "semesterId");
@@ -763,7 +763,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 })
                 .collect();
             rows.sort_by(|a, b| s(&a, "code").cmp(&s(&b, "code")));
-            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "room=上课教室；room 为空的行=开课目录本身未排教室（如实告知用户，勿再换工具重查）；time=星期节次(周次)+教室整串" });
+            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有，为空不代表没教室——教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查" });
             out
         }
         "query_xk_selected" => {
@@ -807,7 +807,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             json!({
                 "rows": rows,
                 "details": details,
-                "note": "semester 缺省时只搜当前学期；跨学期请传 semester；detail=true 对前 3 条取详情。注意：CourseX 教室常缺录——查上课教室优先用 query_xk_catalog 的 room 字段",
+                "note": "semester 缺省时只搜当前学期；跨学期请传 semester。details[].timeLocation=上课时间地点——这是教室的权威来源之一（另一个是网络学堂 query_learn_courses 的 timeLocation）",
             })
         }
         "query_invoices" => {
