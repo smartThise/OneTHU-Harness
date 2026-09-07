@@ -600,7 +600,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 // ISeating 限制每日取消 1 次：撞上限时把话说透，别让模型猜
                 if msg.contains("上限") || msg.contains("次数") || msg.contains("频繁") {
                     return Err(format!(
-                        "今日取消次数已达上限（座位系统限制每自然日取消 1 次）。{seat_name} 的预约仍在生效，明天 0 点后可再取消，或到图书馆座位系统「我的中心」手动处理。"
+                        "今日取消次数已达上限（座位系统限制每个图书馆每自然日取消 1 次）。{seat_name} 的预约仍在生效，明天 0 点后可再取消，或到图书馆座位系统「我的中心」手动处理。"
                     ));
                 }
                 return Err(msg);

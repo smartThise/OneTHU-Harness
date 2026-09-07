@@ -44,7 +44,7 @@ type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
 
 /// 桥回执等待上限：工具链路 TS 侧自带 45s，600s 是「宿主整个没了」级兜底
 /// 桥调用是本地 IPC（毫秒级）——30s 已是极限宽限；挂死必须尽快显形而非拖 10 分钟
-const BRIDGE_TIMEOUT: Duration = Duration::from_secs(30);
+const BRIDGE_TIMEOUT: Duration = Duration::from_secs(60); // R10: webvpn 自愈链（token 重取+复核）可能 30s+
 
 pub struct StdioHost {
     /// 泵线程路由来的插件 RPC 请求/通知（主循环 poll 阻塞在此，无锁竞争）；
