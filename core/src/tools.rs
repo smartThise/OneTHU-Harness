@@ -744,19 +744,33 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             json!({ "cancelled": true, "target": s(args, "target") })
         }
         "query_xk_catalog" => {
-            // 服务端搜索（选课页查询框同款，每页 20 行秒回）——不再全量爬目录
-            //（getXkCatalog 最多 320 页，桥 5s 看门狗实录挂起）
+            // 服务端搜索（每页 20 行秒回）。教师名优先单独作过滤（更准；且绕开
+            // 课名 GBK 参数的未知嫌疑——该路径应用里没在线用过），返回后本地按 q 筛课名。
             let q = s(args, "q");
+            let teacher = s(args, "teacher");
             let is_code = !q.is_empty() && q.chars().all(|ch| ch.is_ascii_alphanumeric());
-            let mut out = host(ctx, "xk", "search", json!([{
-                "kcm": if is_code { json!(null) } else { json!(q) },
+            let page = args.get("page").and_then(|p| p.as_i64()).unwrap_or(1);
+            let mut filter: Value = json!({
+                "kcm": if is_code || !teacher.is_empty() { json!(null) } else { json!(q) },
                 "kch": if is_code { json!(q) } else { json!(null) },
-                "teacher": s(args, "teacher"),
+                "teacher": if teacher.is_empty() { json!(null) } else { json!(teacher) },
                 "semester": s(args, "semester"),
-                "page": args.get("page").and_then(|p| p.as_i64()).unwrap_or(1),
-            }]))?;
-            let rows: Vec<Value> = arr_of(&out.get("rows").cloned().unwrap_or_else(|| json!([])))
+                "page": page,
+            });
+            if is_code {
+                filter["kcm"] = json!(null);
+            }
+            let mut out = host(ctx, "xk", "search", json!([filter]))?;
+            let raw = out.get("rows").cloned().unwrap_or_else(|| json!([]));
+            let mut rows: Vec<Value> = arr_of(&raw)
                 .iter()
+                .filter(|c| {
+                    q.is_empty()
+                        || is_code
+                        || !teacher.is_empty() && s(c, "name").contains(&q)
+                        || s(c, "name").contains(&q)
+                        || s(c, "code").contains(&q)
+                })
                 .map(|c| {
                     let time = s(c, "time");
                     let mut room = s(c, "room");
@@ -768,13 +782,23 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                     json!({ "code": s(c, "code"), "seq": s(c, "seq"), "name": s(c, "name"), "teacher": s(c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(c, "teacherId") })
                 })
                 .collect();
+            // 教师过滤 + 本地课名筛选后若为空，但服务端确有行 → 该教师本学期没这门课（如实说）
+            let server_rows = arr_of(&raw).len();
+            let page_kind = s(&out, "pageKind");
             out = json!({
                 "count": rows.len(),
+                "serverRowCount": server_rows,
                 "page": out.get("page").cloned().unwrap_or(json!(1)),
                 "hasMore": out.get("hasMore").cloned().unwrap_or(json!(false)),
+                "pageKind": page_kind,
+                "diag": if page_kind == "unknown" {
+                    let h: String = out.get("htmlHead").and_then(|v| v.as_str()).unwrap_or("").chars().take(120).collect();
+                    h
+                } else { String::new() },
                 "rows": rows,
-                "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有，为空不代表没教室——教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查；hasMore=true 可带 page 翻页",
+                "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有；教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查；serverRowCount>0 而 count=0=该过滤组合无匹配（如该教师本学期无此课），如实告知勿重试同参数",
             });
+            rows.clear();
             out
         }
         "query_xk_selected" => {
@@ -810,7 +834,10 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                     .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(|x| x.to_string()))
                     .collect();
                 ids.into_iter()
-                    .filter_map(|id| host(ctx, "coursex", "detail", json!([id])).ok())
+                    .map(|id| match host(ctx, "coursex", "detail", json!([id])) {
+                        Ok(v) => v,
+                        Err(e) => json!({ "id": id, "error": e }),
+                    })
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
