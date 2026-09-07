@@ -828,10 +828,10 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "timeLocation": s(it, "timeLocation"), "semesterId": s(it, "semesterId") }))
                 .collect();
             if rows.is_empty() {
-                return Ok(json!({
+                return Ok(ToolOut::Text(json!({
                     "rows": [],
                     "note": "0 行：q 必须是单个关键词（课名 或 教师名，不拼接）。建议重试：只用「郑莉」，或只用「计算机程序设计基础」，或换 semester",
-                }));
+                }).to_string()));
             }
             let details = if s(args, "detail") == "true" && !rows.is_empty() {
                 let ids: Vec<String> = rows
