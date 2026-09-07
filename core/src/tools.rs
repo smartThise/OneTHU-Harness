@@ -566,18 +566,36 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let r = host(ctx, "library", "book", json!([seat, n(&sec, "id"), dc]))?;
             let ok = r.get("status").and_then(|x| x.as_i64()).unwrap_or(0) == 1
                 || s(&r, "msg").contains("成功");
-            if ok {
-                json!({ "success": true, "raw": r, "hint": "可用 my_library_bookings 复核，或 navigate 到预约页" })
-            } else {
+            if !ok {
                 return Err(format!("预约未成功：{}", s_or_raw(&r, "msg")));
             }
+            // 精简回执：raw 里有数 KB 的 spaceInfo/hash 结构，用户只需要关键事实
+            let d = r.get("data").cloned().unwrap_or(json!({}));
+            let seat_name = s(&seat, "zhName");
+            let status_name = d.get("statusName").and_then(|x| x.as_str()).unwrap_or("预约成功");
+            let time = d.get("starttime").and_then(|x| x.as_str())
+                .map(|t| format!("今天 {}", t))
+                .unwrap_or_else(|| "今天".into());
+            json!({
+                "success": true,
+                "seat": seat_name,
+                "section": s(&sec, "zhName"),
+                "time": time,
+                "status": status_name,
+                "hint": "已同步到预约记录；可用 my_library_bookings 复核"
+            })
         }
         "my_library_bookings" => host(ctx, "library", "records", json!([]))?,
         "cancel_library_booking" => {
             let recs = arr_of(&host(ctx, "library", "records", json!([]))?);
             let rec = recs.get(n(args, "bookingIdx") as usize).ok_or("bookingIdx 越界")?;
             let seat_name = s(rec, "pos").clone();
-            if let Err(e) = host(ctx, "library", "cancel", json!([s(rec, "id")])) {
+            // R10：取消凭据是 menuDel 的 delId（主程序同款）；id 只是展示编号，传错必被拒
+            let cid = rec.get("delId")
+                .and_then(|v| v.as_str().map(|x| x.to_string()).or_else(|| v.as_i64().map(|x| x.to_string())))
+                .filter(|x| !x.is_empty())
+                .unwrap_or_else(|| s(rec, "id"));
+            if let Err(e) = host(ctx, "library", "cancel", json!([cid])) {
                 let msg = e.to_string();
                 // ISeating 限制每日取消 1 次：撞上限时把话说透，别让模型猜
                 if msg.contains("上限") || msg.contains("次数") || msg.contains("频繁") {
