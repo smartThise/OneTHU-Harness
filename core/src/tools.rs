@@ -613,18 +613,44 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let date_str = date.format("%Y-%m-%d").to_string();
             let kinds = arr_of(&host(ctx, "libroom", "list", json!([]))?);
             let kw = s(args, "kind");
-            let mut out: Vec<Value> = Vec::new();
-            for (ki, k) in kinds.iter().enumerate() {
-                if !kw.is_empty() && !s(k, "kindName").contains(&kw) {
-                    continue;
+            // R10 实录：ic-web 对连发 resources 限流（「系统繁忙，请稍后重试」）——
+            // 不带 kind 时原实现对每个类型连发查询必撞限流。改为只回类型目录
+            // （快、稳），让模型带 kind 指定类型后再查占用；带 kind 时逐个查、
+            // 间隔 600ms，失败退避 1.5s 重试一次（只读安全）。
+            if kw.is_empty() {
+                let catalog: Vec<Value> = kinds
+                    .iter()
+                    .enumerate()
+                    .map(|(ki, k)| json!({ "kindIdx": ki, "kindId": n(k, "kindId"), "kindName": s(k, "kindName") }))
+                    .collect();
+                json!({ "kinds": catalog, "note": "以上是全部类型目录；查某类型的房间与占用请带 kind 参数重查（如 kind=研讨间）" })
+            } else {
+                let matched: Vec<(usize, &Value)> = kinds
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, k)| s(k, "kindName").contains(&kw))
+                    .collect();
+                if matched.is_empty() {
+                    return Err(format!(
+                        "找不到类型「{kw}」，可用：{}",
+                        kinds.iter().map(|k| s(k, "kindName")).collect::<Vec<_>>().join("、")
+                    ));
                 }
-                let rooms = arr_of(&host(ctx, "libroom", "resources", json!([date_str, n(k, "kindId")]))?);
-                out.push(json!({ "kindIdx": ki, "kindId": n(k, "kindId"), "kindName": s(k, "kindName"), "date": date_str, "rooms": rooms }));
+                let mut out: Vec<Value> = Vec::new();
+                for (i, (ki, k)) in matched.iter().enumerate() {
+                    if i > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(600));
+                    }
+                    let mut res = host(ctx, "libroom", "resources", json!([date_str, n(k, "kindId")]));
+                    if res.is_err() {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        res = host(ctx, "libroom", "resources", json!([date_str, n(k, "kindId")]));
+                    }
+                    let rooms = arr_of(&res?);
+                    out.push(json!({ "kindIdx": ki, "kindId": n(k, "kindId"), "kindName": s(k, "kindName"), "date": date_str, "rooms": rooms }));
+                }
+                json!({ "kinds": out })
             }
-            if out.is_empty() {
-                return Err(format!("找不到类型「{kw}」，可用：{}", kinds.iter().map(|k| s(k, "kindName")).collect::<Vec<_>>().join("、")));
-            }
-            json!({ "kinds": out })
         }
         "book_libroom" => {
             // 需要.kindIdx：约定模型须先用 query_librooms；若缺省则取第一个 kind
