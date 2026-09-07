@@ -250,7 +250,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_coursex",
-            desc: "查 CourseX 课程共享计划【没选的课的时间地点首选这个】：q=课名或教师名（二选一即可）；rows[].timeLocation=星期节次+教室。semester 缺省=当前学期，跨学期传 semester（如 2026-2027-1）。自己选了的课查课表 query_schedule 即有",
+            desc: "查 CourseX 课程共享计划【没选的课的时间地点首选】：q=单个关键词（课名 或 教师名，二选一，不要拼接）。教室对命中行的 id 用 detail=true 取（timeLocation）。semester 缺省=当前；跨学期传 semester（如 2026-2027-1）。自己选了的课直接查 query_schedule",
             params: p(json!({
                 "q": {"type": "string"},
                 "semester": {"type": "string"},
@@ -827,6 +827,12 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .take(12)
                 .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "timeLocation": s(it, "timeLocation"), "semesterId": s(it, "semesterId") }))
                 .collect();
+            if rows.is_empty() {
+                return Ok(json!({
+                    "rows": [],
+                    "note": "0 行：q 必须是单个关键词（课名 或 教师名，不拼接）。建议重试：只用「郑莉」，或只用「计算机程序设计基础」，或换 semester",
+                }));
+            }
             let details = if s(args, "detail") == "true" && !rows.is_empty() {
                 let ids: Vec<String> = rows
                     .iter()
@@ -845,7 +851,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             json!({
                 "rows": rows,
                 "details": details,
-                "note": "rows[].timeLocation=上课时间地点（教室就在搜索结果行里，人类流程即如此：q=课名或教师名，最多换学期）。details 为空不影响 rows 已含答案；跨学期传 semester",
+                "note": "q 只填一个关键词：课名 或 教师名，绝不拼接（「郑莉计算机程序设计基础」查不到任何东西）；0 行就换另一个关键词或换 semester。教室在详情：对命中的 id 再 detail=true",
             })
         }
         "query_invoices" => {
