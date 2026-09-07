@@ -436,7 +436,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "navigate",
-            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。网络学堂一键直达：learn-course {courseId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId}（具体作业）、learn-notice-detail {courseId, itemId}（具体通知）、learn-files {courseId}（文件列表）、learn-assignments/learn-notices（全列表）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
+            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。网络学堂一键直达：learn-course {courseId, semesterId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, semesterId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId, semesterId}（具体作业）、learn-notice-detail {courseId, itemId, semesterId}（具体通知）、learn-files {courseId, semesterId}（文件列表）、learn-assignments/learn-notices。semesterId=课程所属学期（query_learn_courses 返回的 semester；**必传**——courseId 是学期作用域的，不传会落空白页）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
             params: p(json!({
                 "page": {"type": "string"},
                 "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}"}
