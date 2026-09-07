@@ -115,6 +115,42 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_invoices",
+            desc: "查电子发票列表（页码可选，默认第 1 页）",
+            params: p(json!({ "page": {"type": "integer", "minimum": 1} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_bank_payments",
+            desc: "查银行代发工资记录（按月汇总）",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_graduate_income",
+            desc: "查研究生收入明细（begin/end=YYYY-MM-DD，缺省近 90 天；本科生无权限会如实说明）",
+            params: p(json!({ "begin": {"type": "string"}, "end": {"type": "string"} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_dorm_score",
+            desc: "查宿舍卫生检查成绩",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_physical_exam",
+            desc: "查体测成绩",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "query_assessments",
+            desc: "查教学评估任务列表（是否已填等）",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
             name: "query_dorm_ele_records",
             desc: "查宿舍电费缴费记录（时间/金额/渠道/状态）。注意：剩余电量查询暂未开放（电子身份系统需单独登录），用户问余额时说明这一点",
             params: p(json!({}), &[]),
@@ -432,6 +468,44 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .collect();
             json!({ "count": txs.len(), "netAmount": total, "note": "amount 正负为收支方向", "rows": rows, "truncated": txs.len() > 90 })
         }
+        "query_invoices" => {
+            let page = args.get("page").and_then(|p| p.as_i64()).unwrap_or(1);
+            let out = host(ctx, "info", "invoices", json!([page]))?;
+            let rows: Vec<Value> = arr_of(&out.get("data").cloned().unwrap_or_else(|| json!([])))
+                .iter()
+                .take(15)
+                .map(|it| {
+                    json!({ "title": s(it, "title"), "amount": s(it, "amount"), "date": s(it, "date"), "buyer": s(it, "buyer"), "uuid": s(it, "uuid") })
+                })
+                .collect();
+            json!({ "count": out.get("count").cloned().unwrap_or_else(|| json!(0)), "rows": rows, "note": "uuid 可用于后续取 PDF（如开放）" })
+        }
+        "query_bank_payments" => {
+            let rows: Vec<Value> = arr_of(&host(ctx, "info", "bankPayments", json!([]))?)
+                .into_iter()
+                .take(12)
+                .map(|it| json!({ "month": s(&it, "month"), "payment": it.get("payment").cloned().unwrap_or_else(|| json!([])) }))
+                .collect();
+            json!({ "rows": rows, "note": "payment 为该月各项金额数组（列序=上游原样）" })
+        }
+        "query_graduate_income" => {
+            let b = s(args, "begin");
+            let e = s(args, "end");
+            let out = host(ctx, "info", "graduateIncome", json!([b, e]))?;
+            if out.is_null() {
+                json!({ "noPermission": true, "note": "无权限或无数据（本科生专项目不开放，属正常）" })
+            } else {
+                let rows: Vec<Value> = arr_of(&out)
+                    .iter()
+                    .take(20)
+                    .map(|it| json!({ "time": s(it, "time"), "name": s(it, "name"), "amount": s(it, "amount"), "card": s(it, "card") }))
+                    .collect();
+                json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 20 })
+            }
+        }
+        "query_dorm_score" => host(ctx, "info", "dormScore", json!([]))?,
+        "query_physical_exam" => host(ctx, "info", "physicalExam", json!([]))?,
+        "query_assessments" => host(ctx, "info", "assessmentList", json!([]))?,
         "query_dorm_ele_records" => {
             // R10 用户决策：剩余电量暂关（电子身份单独登录卡死小OH），只开缴费记录
             let recs = arr_of(&host(ctx, "dorm", "elePayRecord", json!([]))?);
