@@ -639,7 +639,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .iter()
                 .map(|c| json!({ "id": s(c, "id"), "name": s(c, "name"), "teacher": s(c, "teacher"), "semester": out.get("semester").cloned().unwrap_or(json!("")) }))
                 .collect();
-            json!({ "semester": out.get("semester").cloned().unwrap_or(json!("")), "count": rows.len(), "rows": rows })
+            json!({ "semester": out.get("semester").cloned().unwrap_or(json!("")), "count": rows.len(), "rows": rows, "note": "semester=网络学堂自报当前学期（新学期课程可能未发布在此学期）；查不到时用 query_learn_semesters 拿列表，换 semesterId 再试" })
         }
         "query_learn_homework" => {
             let sem = s(args, "semesterId");
@@ -752,28 +752,18 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .map(|c| {
                     // time 形如「星期二第4节(全周)二教403」——教室就是尾部 token，拆出来直给
                     let time = s(&c, "time");
-                    // 「星期二第4节(全周)二教403」——教室=最后一个「)」之后的尾段
-                    // （无空格可分词；实录 v1 分词取到整串）；无括号回退含数字的尾 token
-                    let room = match time.rfind(')') {
-                        Some(i) => {
-                            let tail = time[i + 1..].trim();
-                            if tail.is_empty() {
-                                time.split(|ch| ch == ' ' || ch == ',' || ch == '，' || ch == '、')
-                                    .filter(|t| t.contains("教") && t.chars().any(|ch| ch.is_ascii_digit()))
-                                    .next_back()
-                                    .unwrap_or("")
-                                    .to_string()
-                            } else {
-                                tail.to_string()
-                            }
+                    // 优先用 core 拆好的 room；缺省再按「)」尾段兜底
+                    let mut room = s(&c, "room");
+                    if room.is_empty() {
+                        if let Some(i) = time.rfind(')') {
+                            room = time[i + 1..].trim().to_string();
                         }
-                        None => String::new(),
-                    };
+                    }
                     json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") })
                 })
                 .collect();
             rows.sort_by(|a, b| s(&a, "code").cmp(&s(&b, "code")));
-            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "room=上课教室（从 time 尾部解析）；time=星期节次(周次)+教室整串" });
+            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "room=上课教室；room 为空的行=开课目录本身未排教室（如实告知用户，勿再换工具重查）；time=星期节次(周次)+教室整串" });
             out
         }
         "query_xk_selected" => {
