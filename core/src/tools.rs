@@ -115,6 +115,16 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_coursex",
+            desc: "查 CourseX（课程共享计划）任意学期某门课的时间地点：q=课名/教师关键词；semester 缺省=当前学期（学期 id 列表先查一次会返回）",
+            params: p(json!({
+                "q": {"type": "string"},
+                "semester": {"type": "string"},
+                "detail": {"type": "boolean", "description": "对首个结果取详情（具体时间地点）"}
+            }), &["q"]),
+            confirm: false,
+        },
+        ToolDef {
             name: "query_invoices",
             desc: "查电子发票列表（页码可选，默认第 1 页）",
             params: p(json!({ "page": {"type": "integer", "minimum": 1} }), &[]),
@@ -467,6 +477,27 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 })
                 .collect();
             json!({ "count": txs.len(), "netAmount": total, "note": "amount 正负为收支方向", "rows": rows, "truncated": txs.len() > 90 })
+        }
+        "query_coursex" => {
+            let q = s(args, "q");
+            let sem = s(args, "semester");
+            let list = host(ctx, "coursex", "search", json!([q, sem]))?;
+            let rows: Vec<Value> = arr_of(&list)
+                .iter()
+                .take(12)
+                .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "semesterId": s(it, "semesterId") }))
+                .collect();
+            let detail = if s(args, "detail") == "true" && !rows.is_empty() {
+                let first = rows[0].get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                host(ctx, "coursex", "detail", json!([first])).ok()
+            } else {
+                None
+            };
+            json!({
+                "rows": rows,
+                "detail": detail,
+                "note": "semester 缺省时只搜当前学期；跨学期请传 semester；detail=true 对首条取具体时间地点",
+            })
         }
         "query_invoices" => {
             let page = args.get("page").and_then(|p| p.as_i64()).unwrap_or(1);
