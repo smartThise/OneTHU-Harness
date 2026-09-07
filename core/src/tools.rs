@@ -250,7 +250,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_coursex",
-            desc: "查 CourseX（课程共享计划）：q=课名/教师关键词；detail=true 取前 3 条详情（details[].timeLocation=时间地点/教室）。查教室首选这个或网络学堂",
+            desc: "查 CourseX 课程共享计划【没选的课的时间地点首选这个】：q=课名或教师名（二选一即可）；rows[].timeLocation=星期节次+教室。semester 缺省=当前学期，跨学期传 semester（如 2026-2027-1）。自己选了的课查课表 query_schedule 即有",
             params: p(json!({
                 "q": {"type": "string"},
                 "semester": {"type": "string"},
@@ -825,7 +825,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&list)
                 .iter()
                 .take(12)
-                .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "semesterId": s(it, "semesterId") }))
+                .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "timeLocation": s(it, "timeLocation"), "semesterId": s(it, "semesterId") }))
                 .collect();
             let details = if s(args, "detail") == "true" && !rows.is_empty() {
                 let ids: Vec<String> = rows
@@ -845,7 +845,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             json!({
                 "rows": rows,
                 "details": details,
-                "note": "semester 缺省时只搜当前学期；跨学期请传 semester。details[].timeLocation=上课时间地点——这是教室的权威来源之一（另一个是网络学堂 query_learn_courses 的 timeLocation）",
+                "note": "rows[].timeLocation=上课时间地点（教室就在搜索结果行里，人类流程即如此：q=课名或教师名，最多换学期）。details 为空不影响 rows 已含答案；跨学期传 semester",
             })
         }
         "query_invoices" => {
