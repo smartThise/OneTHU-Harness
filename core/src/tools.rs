@@ -749,10 +749,20 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .into_iter()
                 .filter(|c| q.is_empty() || s(c, "name").contains(&q) || s(c, "code").contains(&q) || s(c, "teacher").contains(&q))
                 .take(25)
-                .map(|c| json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": s(&c, "time"), "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") }))
+                .map(|c| {
+                    // time 形如「星期二第4节(全周)二教403」——教室就是尾部 token，拆出来直给
+                    let time = s(&c, "time");
+                    let room = time
+                        .split(|ch| ch == ' ' || ch == ',' || ch == '，' || ch == '、')
+                        .filter(|t| t.contains("教") && t.chars().any(|ch| ch.is_ascii_digit()))
+                        .next_back()
+                        .unwrap_or("")
+                        .to_string();
+                    json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") })
+                })
                 .collect();
             rows.sort_by(|a, b| s(&a, "code").cmp(&s(&b, "code")));
-            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25 });
+            out = json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 25, "note": "room=上课教室（从 time 尾部解析）；time=星期节次(周次)+教室整串" });
             out
         }
         "query_xk_selected" => {
