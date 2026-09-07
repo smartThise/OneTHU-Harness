@@ -478,26 +478,49 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                     .filter(|(_, v)| v.as_i64().map(|x| x != 5).unwrap_or(true))
                     .map(|(p, _)| p)
                     .collect();
+                // R10：42 格 = 本周一~周日 × 每天 6 大节——按天归位成结构化输出。
+                // （此前把原始下标直接吐给模型，模型误读成"一天 42 节"）
+                let day_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+                let mut by_day: Vec<Value> = Vec::new();
+                for (di, dname) in day_names.iter().enumerate() {
+                    let periods: Vec<u32> = busy
+                        .iter()
+                        .filter(|&&p| p / 6 == di)
+                        .map(|&p| (p % 6 + 1) as u32)
+                        .collect();
+                    if !periods.is_empty() {
+                        by_day.push(json!({ "day": dname, "busyPeriods": periods }));
+                    }
+                }
                 let rname = {
                     let nm = s(r, "name");
                     if nm.is_empty() { format!("教室{i}") } else { nm }
                 };
-                rooms.push(json!({ "room": rname, "busyPeriods": busy }));
+                rooms.push(json!({
+                    "room": rname, "capacity": n(r, "capacity"),
+                    "busyByDay": by_day,
+                    "freeNote": "busyByDay=被占用的大节（每格≈两大节）；未列出的天/节次均空闲"
+                }));
             }
-            json!({ "building": s(b, "name"), "week": week, "rooms": rooms, "periodNote": "节次下标 0-41=周一第1节起共42格；busyPeriods 为占用下标，其余空闲" })
+            json!({ "building": s(b, "name"), "week": week, "rooms": rooms })
         }
         "query_library" => {
             let dc = date_choice(&or_default(&s(args, "date"), "今天"))?;
             let libs = arr_of(&host(ctx, "library", "list", json!([]))?);
             let mut out: Vec<Value> = Vec::new();
             for (li, lib) in libs.iter().enumerate() {
-                let floors = arr_of(&host(ctx, "library", "floors", json!([n(lib, "id"), dc]))?);
-                let frows: Vec<Value> = floors
-                    .iter()
-                    .enumerate()
-                    .map(|(fi, f)| json!({ "floorIdx": fi, "name": s(f, "zhName"), "available": n(f, "available"), "total": n(f, "total") }))
-                    .collect();
-                out.push(json!({ "libIdx": li, "id": n(lib, "id"), "name": s(lib, "zhName"), "floors": frows }));
+                // R10：单馆失败只记 error 项，不拖垮整个总览（此前一馆解析失败全工具报错）
+                match host(ctx, "library", "floors", json!([n(lib, "id"), dc])) {
+                    Ok(floors) => {
+                        let frows: Vec<Value> = arr_of(&floors)
+                            .iter()
+                            .enumerate()
+                            .map(|(fi, f)| json!({ "floorIdx": fi, "name": s(f, "zhName"), "available": n(f, "available"), "total": n(f, "total") }))
+                            .collect();
+                        out.push(json!({ "libIdx": li, "id": n(lib, "id"), "name": s(lib, "zhName"), "floors": frows }));
+                    }
+                    Err(e) => out.push(json!({ "libIdx": li, "name": s(lib, "zhName"), "error": e })),
+                }
             }
             json!({ "dateChoice": dc, "libraries": out })
         }
