@@ -115,8 +115,8 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
-            name: "query_dorm_electricity",
-            desc: "查宿舍电费剩余电量与更新时间",
+            name: "query_dorm_ele_records",
+            desc: "查宿舍电费缴费记录（时间/金额/渠道/状态）。注意：剩余电量查询暂未开放（电子身份系统需单独登录），用户问余额时说明这一点",
             params: p(json!({}), &[]),
             confirm: false,
         },
@@ -424,7 +424,21 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .collect();
             json!({ "count": txs.len(), "netAmount": total, "note": "amount 正负为收支方向", "rows": rows, "truncated": txs.len() > 90 })
         }
-        "query_dorm_electricity" => host(ctx, "dorm", "eleRemainder", json!([]))?,
+        "query_dorm_ele_records" => {
+            // R10 用户决策：剩余电量暂关（电子身份单独登录卡死小OH），只开缴费记录
+            let recs = arr_of(&host(ctx, "dorm", "elePayRecord", json!([]))?);
+            let rows: Vec<Value> = recs
+                .iter()
+                .take(20)
+                .map(|r| {
+                    json!({
+                        "time": s(r, "time"), "amount": s(r, "value"),
+                        "channel": s(r, "channel"), "status": s(r, "status"),
+                    })
+                })
+                .collect();
+            json!({ "count": recs.len(), "rows": rows, "truncated": recs.len() > 20 })
+        }
         "query_network" => {
             let b = host(ctx, "network", "balance", json!([]))?;
             let cnt: Value = host(ctx, "network", "deviceCount", json!([]))?;
