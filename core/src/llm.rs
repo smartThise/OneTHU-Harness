@@ -358,7 +358,15 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
         }
         line.clear();
         match br.read_line(&mut line) {
-            Ok(0) => break, // 流结束
+            Ok(0) => {
+                (hooks.on_log)(&format!(
+                    "✓ 流读取完毕（EOF）：content {} 字 / tools {}",
+                    content.chars().count(),
+                    calls.len()
+                ));
+                break;
+            }
+            Ok(_) => {}
             Ok(_) => {}
             Err(e) => return Err(LlmError { message: format!("流读取中断：{e}") }),
         }
@@ -369,6 +377,12 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
         let Some(data) = t.strip_prefix("data:") else { continue };
         let data = data.trim();
         if data == "[DONE]" {
+            (hooks.on_log)(&format!(
+                "✓ 流读取完毕（[DONE]）：content {} 字 / tools {} / reasoning {} 字",
+                content.chars().count(),
+                calls.len(),
+                reasoning.chars().count()
+            ));
             break;
         }
         let Ok(chunk) = serde_json::from_str::<Value>(data) else { continue };

@@ -268,6 +268,9 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
             sess.messages.push(Msg::assistant(&answer));
             sess.updated_at = session::now_ms();
+            (hooks.on_log)("💾 会话写盘…");
+            store.save(h);
+            (hooks.on_log)("💾 写盘完成");
             break;
         }
 
