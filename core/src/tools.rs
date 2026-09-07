@@ -135,6 +135,14 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_subscribed_news",
+            desc: "查用户的订阅新闻流（信息页订阅源聚合；给 page 翻页）。返回含 url，回答时每条附链接",
+            params: p(json!({
+                "page": {"type": "integer", "minimum": 1}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
             name: "read_news_article",
             desc: "读一篇新闻的正文（需要 query_news 返回的 xxid）",
             params: p(json!({ "news_id": {"type": "string"} }), &["news_id"]),
@@ -224,7 +232,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "navigate",
-            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）",
+            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。资金类只读红线不拦导航：如校园卡充值界面 = navigate life + params {\"lifeTab\":\"card\"}（充值操作由用户在官方界面完成，助手不代充）",
             params: p(json!({
                 "page": {"type": "string"},
                 "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}"}
@@ -455,9 +463,9 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&list)
                 .into_iter()
                 .take(20)
-                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source") }))
+                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "url": s(&it, "url") }))
                 .collect();
-            json!({ "rows": rows })
+            json!({ "rows": rows, "note": "每条新闻务必把 url 一并给用户（可点开原文），不要只报标题" })
         }
         "read_news_article" => {
             let d = host(ctx, "info", "newsDetail", json!([s(args, "news_id")]))?;
@@ -730,6 +738,16 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rec = recs.get(n(args, "recordIdx") as usize).ok_or("recordIdx 越界")?;
             host(ctx, "libroom", "cancel", json!([s(rec, "uuid")]))?;
             json!({ "success": true })
+        }
+        "query_subscribed_news" => {
+            let page = args.get("page").and_then(|p| p.as_i64()).unwrap_or(1);
+            let list = host(ctx, "info", "newsSub", json!([page]))?;
+            let rows: Vec<Value> = arr_of(&list)
+                .into_iter()
+                .take(20)
+                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "url": s(&it, "url") }))
+                .collect();
+            json!({ "rows": rows, "note": "每条新闻务必把 url 一并给用户（可点开原文）" })
         }
         "navigate" => {
             let params = args.get("params").cloned().unwrap_or(json!({}));
