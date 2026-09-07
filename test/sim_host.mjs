@@ -23,7 +23,7 @@ const hostCalls = [];
 const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (d) => (body += d));
-  req.on("end", () => {
+  req.on("end", async () => {
     const reqJson = JSON.parse(body);
     const lastToolMsg = [...reqJson.messages].reverse().find((m) => m.role === "tool");
     hostCalls.push({ toolMsgCount: reqJson.messages.filter((m) => m.role === "tool").length });
@@ -31,6 +31,10 @@ const server = http.createServer((req, res) => {
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
     const lastUserMsg = [...reqJson.messages].reverse().find((m) => m.role === "user");
     const booking = lastUserMsg && lastUserMsg.content.includes("订");
+    if (lastUserMsg && lastUserMsg.content.includes("慢速测试")) {
+      // R9 回归触发器：模拟网关慢峰——chat 占住主循环 2s
+      await sleep(2000);
+    }
     if (booking) {
       // 订座场景：要求调用 book_library_seat（纯索引参数；确认执行不再进 LLM）
       send({
@@ -59,7 +63,7 @@ const server = http.createServer((req, res) => {
       send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 321, completion_tokens: 17 } });
     } else {
       // 第 2 轮：用工具结果作答
-      assert.ok(lastToolMsg.content.includes("123.45"), "工具结果应包含模拟余额");
+      assert.ok(lastToolMsg.content.includes("123.45"), "工具结果应包含模拟余额: " + JSON.stringify(reqJson.messages).slice(-500));
       // v4 协议断言：assistant(tool_calls) 轮回传 reasoning_content；content 恒为字符串（null 会被 400 砖会话）
       const asstMsg = [...reqJson.messages].reverse().find((m) => m.role === "assistant" && m.tool_calls);
       assert.ok(asstMsg, "第 2 轮请求应含 assistant(tool_calls) 消息");
@@ -219,6 +223,27 @@ async function main() {
   assert.ok(cf.result.answer.includes("已执行"), "应报告执行成功");
   // facade.library.book 内已断言 seat 是真实元素（id=1001）且 sectionId=11
   console.log("✓ 两段式确认执行：", cf.result.answer.split("\n")[0]);
+
+  // R9 关键回归：慢 chat 占用期间，控制命令必须照常秒回（主循环永不阻塞）
+  {
+    await request("run", { command: "new_session" }); // 干净会话：轮次判断不受确认流历史干扰
+    const chatP = request("run", { command: "chat", input: "慢速测试" });
+    await sleep(300); // chat 已被 sidecar 接走（工作线程在等 LLM）
+    const t0 = Date.now();
+    const ns = await request("run", { command: "new_session" }); // chat 进行中重开会话（epoch 守卫应拒绝 chat 的陈旧写回）
+    const dt = Date.now() - t0;
+    assert.ok(dt < 1500, `chat 进行中 new_session 应秒回，实际 ${dt}ms（主循环被 chat 占死？）`);
+    assert.ok(ns.result !== undefined, "new_session 应有应答");
+    const ls = await request("run", { command: "list_sessions" });
+    assert.ok(Array.isArray(ls.result?.sessions), "chat 进行中 list_sessions 应正常");
+    const chatR = await chatP;
+    assert.ok(chatR.result?.ok !== false, "慢速 chat 最终应完成");
+    // epoch 守卫：chat 的陈旧拷贝不得复活已被重置的会话——当前活跃会话应保持干净
+    const ex = await request("run", { command: "export_session", input: "" });
+    const sess = ex.result?.ok ? JSON.parse(ex.result.json) : { messages: [] };
+    assert.ok((sess.messages ?? []).length === 0, `重置后的会话不得被慢 chat 复活（实际 ${JSON.stringify(sess.messages ?? []).slice(0, 120)}）`);
+    console.log(`  ✓ 慢 chat 进行中控制命令秒回（${dt}ms），陈旧写回被拒`);
+  }
 
   // 7) dispose
   const disp = await request("dispose", {});

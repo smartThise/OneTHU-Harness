@@ -9,6 +9,9 @@ mod incoming {
     pub use onethu_harness_core::host::Incoming;
 }
 
+/// chat 串行护栏：同刻至多一个 chat 工作线程（重复发起立即拒绝而非排队）
+static CHAT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
     let mut h = StdioHost::spawn();
     let emit = StdioEmit;
@@ -30,22 +33,34 @@ fn main() {
                 "run" => {
                     let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let input = params.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    if command == "chat" {
-                        // 长任务：主循环直跑（打断快路径靠读线程标志，主循环阻塞在 LLM 流上也毫秒级生效）
-                        h.reset_interrupt();
-                        let result = dispatch(&mut h, &emit, "chat", &input);
-                        h.reply_ok(&id, result);
-                    } else {
-                        // 控制命令快速路（会话管理/导入导出/自检）：另线程以共享桥泵执行——
-                        // chat 在跑时主循环阻塞在 dispatch 里，否则新会话/历史/导入导出会排到队尾形同死键。
-                        // 桥泵按序号配对天然支持并发；与在跑 chat 的存储写竞态由「打断优先」约定兜底。
-                        let bridge = h.bridge();
-                        std::thread::spawn(move || {
-                            let mut bh = bridge;
-                            let result = dispatch(&mut bh, &StdioEmit, &command, &input);
-                            bh.reply_ok(&id, result);
-                        });
+                    // R9 关键教训：主循环绝不能 inline dispatch——chat 一跑几十秒，
+                    // 后续 run（新会话/历史/导入导出/打断后重试）全部排在队尾形同死键
+                    //（此前「控制快速路」要在主循环读到请求后才生效，而主循环恰恰被 chat 占死；
+                    //  sim 假服务器毫秒级返回掩盖了这一点）。现在所有 run 一律进工作线程，
+                    // 主循环只做收发；chat 串行由 CHAT_IN_FLIGHT 护栏快速拒绝，不排队。
+                    if command == "chat" && CHAT_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        h.reply_ok(
+                            &id,
+                            serde_json::json!({
+                                "type": "chat", "ok": false,
+                                "error": "已有对话在运行：请等它完成，或点打断后再发。"
+                            }),
+                        );
+                        continue;
                     }
+                    let bridge = h.bridge();
+                    let cmd = command.clone();
+                    std::thread::spawn(move || {
+                        let mut bh = bridge;
+                        if cmd == "chat" {
+                            bh.reset_interrupt();
+                        }
+                        let result = dispatch(&mut bh, &StdioEmit, &cmd, &input);
+                        if cmd == "chat" {
+                            CHAT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        bh.reply_ok(&id, result);
+                    });
                 }
                 "dispose" => {
                     eprintln!("[harness] dispose：退出");

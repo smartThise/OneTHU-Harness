@@ -111,18 +111,42 @@ pub struct Store {
     pub totals: Usage,
     pub totals_cost_usd: f64,
     pub sessions: Vec<Session>,
+    /// 并发丢写保护（R9）：落盘世代——工作线程的陈旧拷贝拒写
+    #[serde(default)]
+    pub epoch: std::cell::Cell<u64>,
+    /// 本拷贝加载时的世代（不落盘）
+    #[serde(skip)]
+    loaded_epoch: std::cell::Cell<u64>,
 }
 
 impl Store {
     pub fn load(h: &mut dyn Host) -> Store {
         let raw: Value = h.call("storage", "get", serde_json::json!([STORE_KEY])).unwrap_or(Value::Null);
-        match raw {
+        let mut store = match raw {
             Value::Null => Store { v: 1, ..Default::default() },
             v => serde_json::from_value(v).unwrap_or_default(),
-        }
+        };
+        store.loaded_epoch.set(store.epoch.get());
+        store
     }
 
     pub fn save(&self, h: &mut dyn Host) {
+        // R9 丢写保护：所有 run 都在并发工作线程里跑，共享一份 storage——
+        // 若落盘世代已被别的命令推进（如慢 chat 进行中用户新建会话），
+        // 本份陈旧拷贝整体拒写，避免复活已被重置的会话。
+        if let Ok(cur) = h.call("storage", "get", serde_json::json!([STORE_KEY])) {
+            let cur_epoch = serde_json::from_value::<Store>(cur).map(|s| s.epoch.get()).unwrap_or(0);
+            if cur_epoch != self.loaded_epoch.get() {
+                eprintln!(
+                    "[harness] store.save 拒写：世代落后（本 {} / 盘 {}），会话已被并发命令重置",
+                    self.loaded_epoch.get(),
+                    cur_epoch
+                );
+                return;
+            }
+        }
+        self.epoch.set(self.loaded_epoch.get() + 1);
+        self.loaded_epoch.set(self.epoch.get());
         let payload = match serde_json::to_value(self) {
             Ok(v) => v,
             Err(_) => return,

@@ -204,7 +204,8 @@ impl Host for StdioHost {
     }
 }
 
-/// 控制线程桥：不提供 reset_interrupt（绝不能清掉在跑 chat 的打断标志）
+/// 工作线程桥（chat / 控制命令共用）。reset_interrupt 只有 chat 工作线程
+/// 在开局调用；控制命令绝不调它——纪律约定而非类型隔离。
 pub struct BridgeHandle {
     pending: PendingMap,
     seq: Arc<AtomicU64>,
@@ -212,6 +213,11 @@ pub struct BridgeHandle {
 }
 
 impl BridgeHandle {
+    /// 仅 chat 工作线程开局调用：清上一轮残留的打断标志
+    pub fn reset_interrupt(&self) {
+        self.interrupt.store(false, Ordering::SeqCst);
+    }
+
     pub fn reply_ok(&self, id: &Value, result: Value) {
         send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
