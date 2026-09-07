@@ -224,7 +224,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_xk_catalog",
-            desc: "查本科选课开课目录（semester 如 2026-2027-1，缺省=当前；q 可选课名/课号/教师关键词本地过滤）",
+            desc: "查本科选课开课目录——查某门课【上课教室/时间】首选这个（room 字段=教室，time=星期节次(周次)+教室）。semester 如 2026-2027-1，缺省=当前；q=课名/课号/教师关键词本地过滤",
             params: p(json!({
                 "semester": {"type": "string"},
                 "q": {"type": "string"}
@@ -248,7 +248,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_coursex",
-            desc: "查 CourseX（课程共享计划）任意学期某门课的时间地点：q=课名/教师关键词；semester 缺省=当前学期（学期 id 列表先查一次会返回）",
+            desc: "查 CourseX（课程共享计划镜像，外校/跨学期视角）：q=课名/教师关键词。教室常缺录，查教室请用 query_xk_catalog",
             params: p(json!({
                 "q": {"type": "string"},
                 "semester": {"type": "string"},
@@ -752,12 +752,23 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .map(|c| {
                     // time 形如「星期二第4节(全周)二教403」——教室就是尾部 token，拆出来直给
                     let time = s(&c, "time");
-                    let room = time
-                        .split(|ch| ch == ' ' || ch == ',' || ch == '，' || ch == '、')
-                        .filter(|t| t.contains("教") && t.chars().any(|ch| ch.is_ascii_digit()))
-                        .next_back()
-                        .unwrap_or("")
-                        .to_string();
+                    // 「星期二第4节(全周)二教403」——教室=最后一个「)」之后的尾段
+                    // （无空格可分词；实录 v1 分词取到整串）；无括号回退含数字的尾 token
+                    let room = match time.rfind(')') {
+                        Some(i) => {
+                            let tail = time[i + 1..].trim();
+                            if tail.is_empty() {
+                                time.split(|ch| ch == ' ' || ch == ',' || ch == '，' || ch == '、')
+                                    .filter(|t| t.contains("教") && t.chars().any(|ch| ch.is_ascii_digit()))
+                                    .next_back()
+                                    .unwrap_or("")
+                                    .to_string()
+                            } else {
+                                tail.to_string()
+                            }
+                        }
+                        None => String::new(),
+                    };
                     json!({ "code": s(&c, "code"), "seq": s(&c, "seq"), "name": s(&c, "name"), "teacher": s(&c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(&c, "teacherId") })
                 })
                 .collect();
@@ -791,16 +802,22 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .take(12)
                 .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "semesterId": s(it, "semesterId") }))
                 .collect();
-            let detail = if s(args, "detail") == "true" && !rows.is_empty() {
-                let first = rows[0].get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                host(ctx, "coursex", "detail", json!([first])).ok()
+            let details = if s(args, "detail") == "true" && !rows.is_empty() {
+                let ids: Vec<String> = rows
+                    .iter()
+                    .take(3)
+                    .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(|x| x.to_string()))
+                    .collect();
+                ids.into_iter()
+                    .filter_map(|id| host(ctx, "coursex", "detail", json!([id])).ok())
+                    .collect::<Vec<_>>()
             } else {
-                None
+                Vec::new()
             };
             json!({
                 "rows": rows,
-                "detail": detail,
-                "note": "semester 缺省时只搜当前学期；跨学期请传 semester；detail=true 对首条取具体时间地点",
+                "details": details,
+                "note": "semester 缺省时只搜当前学期；跨学期请传 semester；detail=true 对前 3 条取详情。注意：CourseX 教室常缺录——查上课教室优先用 query_xk_catalog 的 room 字段",
             })
         }
         "query_invoices" => {
