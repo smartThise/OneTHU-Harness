@@ -755,7 +755,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 "semester": s(args, "semester"),
                 "page": args.get("page").and_then(|p| p.as_i64()).unwrap_or(1),
             }]))?;
-            let rows: Vec<Value> = arr_of(out.get("rows").cloned().unwrap_or_else(|| json!([])))
+            let rows: Vec<Value> = arr_of(&out.get("rows").cloned().unwrap_or_else(|| json!([])))
                 .iter()
                 .map(|c| {
                     let time = s(c, "time");
