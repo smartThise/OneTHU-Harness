@@ -14,6 +14,11 @@ use std::time::Duration;
 /// 数据面：onethu.* 原子调用（权限门禁在宿主侧）+ 打断标志
 pub trait Host {
     fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String>;
+    /// 带短超时的调用（落盘等可跳过的旁路操作用）：默认与 call 相同
+    fn call_timeout(&mut self, ns: &str, method: &str, args: Value, _timeout_ms: u64) -> Result<Value, String> {
+        let _ = _timeout_ms;
+        self.call(ns, method, args)
+    }
     fn interrupted(&self) -> bool;
     /// 一轮 run 开始时清打断标志（stdio 侧实现；内嵌侧由宿主管理）
     fn reset_interrupt(&self) {}
@@ -38,7 +43,8 @@ pub type Deferred = Vec<(Value, String, Value)>;
 type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
 
 /// 桥回执等待上限：工具链路 TS 侧自带 45s，600s 是「宿主整个没了」级兜底
-const BRIDGE_TIMEOUT: Duration = Duration::from_secs(600);
+/// 桥调用是本地 IPC（毫秒级）——30s 已是极限宽限；挂死必须尽快显形而非拖 10 分钟
+const BRIDGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct StdioHost {
     /// 泵线程路由来的插件 RPC 请求/通知（主循环 poll 阻塞在此，无锁竞争）；
@@ -175,6 +181,18 @@ fn bridge_call(
     method: &str,
     args: Value,
 ) -> Result<Value, String> {
+    bridge_call_timeout(pending, seq, ns, method, args, BRIDGE_TIMEOUT.as_millis() as u64)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bridge_call_timeout(
+    pending: &PendingMap,
+    seq: &AtomicU64,
+    ns: &str,
+    method: &str,
+    args: Value,
+    timeout_ms: u64,
+) -> Result<Value, String> {
     let rid = seq.fetch_add(1, Ordering::SeqCst) + 1;
     let (tx, rx) = mpsc::channel::<Result<Value, String>>();
     pending
@@ -186,8 +204,29 @@ fn bridge_call(
         "method": "onethu.call",
         "params": { "ns": ns, "method": method, "args": args }
     }));
-    rx.recv_timeout(BRIDGE_TIMEOUT)
-        .unwrap_or_else(|_| Err("宿主桥应答超时（600s）".into()))
+    // 探针：桥调用 5s 无回执就留痕（stderr 逐行转发 UI 日志面板）——定位回执丢失层
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let done = done.clone();
+        let ns2 = ns.to_string();
+        let m2 = method.to_string();
+        std::thread::spawn(move || {
+            for _ in 0..5 {
+                if done.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            if !done.load(Ordering::Relaxed) {
+                eprintln!("[harness] ⏸ 桥调用 {}.{}（#{}）已等 5s 仍无回执", ns2, m2, rid);
+            }
+        });
+    }
+    let out = rx
+        .recv_timeout(Duration::from_millis(timeout_ms))
+        .unwrap_or_else(|_| Err(format!("宿主桥应答超时（{}s）", timeout_ms / 1000)));
+    done.store(true, Ordering::Relaxed);
+    out
 }
 
 impl Host for StdioHost {
@@ -230,6 +269,16 @@ impl BridgeHandle {
 impl Host for BridgeHandle {
     fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String> {
         bridge_call(&self.pending, &self.seq, ns, method, args)
+    }
+
+    fn call_timeout(
+        &mut self,
+        ns: &str,
+        method: &str,
+        args: Value,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        bridge_call_timeout(&self.pending, &self.seq, ns, method, args, timeout_ms)
     }
 
     fn interrupted(&self) -> bool {

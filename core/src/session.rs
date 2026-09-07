@@ -134,7 +134,7 @@ impl Store {
         // R9 丢写保护：所有 run 都在并发工作线程里跑，共享一份 storage——
         // 若落盘世代已被别的命令推进（如慢 chat 进行中用户新建会话），
         // 本份陈旧拷贝整体拒写，避免复活已被重置的会话。
-        if let Ok(cur) = h.call("storage", "get", serde_json::json!([STORE_KEY])) {
+        if let Ok(cur) = h.call_timeout("storage", "get", serde_json::json!([STORE_KEY]), 5_000) {
             let cur_epoch = serde_json::from_value::<Store>(cur).map(|s| s.epoch.get()).unwrap_or(0);
             if cur_epoch != self.loaded_epoch.get() {
                 eprintln!(
@@ -177,7 +177,8 @@ impl Store {
                 None => break,
             }
         }
-        let _ = h.call("storage", "set", serde_json::json!([STORE_KEY, payload]));
+        // 落盘走 5s 短超时旁路：桥挂死时跳过写盘让应答先回（R9：💾 写盘…卡死教训）
+        let _ = h.call_timeout("storage", "set", serde_json::json!([STORE_KEY, payload]), 5_000);
     }
 
     pub fn active_mut(&mut self) -> Option<&mut Session> {
