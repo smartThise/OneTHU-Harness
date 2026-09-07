@@ -250,7 +250,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_coursex",
-            desc: "查 CourseX 课程共享计划【没选的课的时间地点首选】：q=单个关键词（课名 或 教师名，二选一，不要拼接）。教室对命中行的 id 用 detail=true 取（timeLocation）。semester 缺省=当前；跨学期传 semester（如 2026-2027-1）。自己选了的课直接查 query_schedule",
+            desc: "查 CourseX 课程共享计划【没选的课的时间地点首选，一次调用直接给教室】：q=单个关键词（课名 或 教师名，不拼接）。自动取详情合并 rows[].timeLocation（星期节次+教室）。semester 缺省=当前；跨学期传 semester。自己选了的课直接查 query_schedule",
             params: p(json!({
                 "q": {"type": "string"},
                 "semester": {"type": "string"},
@@ -742,6 +742,117 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
         "cancel_kongjian" => {
             host(ctx, "kongjian", "cancel", json!([s(args, "target")]))?;
             json!({ "cancelled": true, "target": s(args, "target") })
+        }
+        "query_xk_catalog" => {
+            // 服务端搜索（每页 20 行秒回）。教师名优先单独作过滤（更准；且绕开
+            // 课名 GBK 参数的未知嫌疑——该路径应用里没在线用过），返回后本地按 q 筛课名。
+            let q = s(args, "q");
+            let teacher = s(args, "teacher");
+            let is_code = !q.is_empty() && q.chars().all(|ch| ch.is_ascii_alphanumeric());
+            let page = args.get("page").and_then(|p| p.as_i64()).unwrap_or(1);
+            let mut filter: Value = json!({
+                "kcm": if is_code || !teacher.is_empty() { json!(null) } else { json!(q) },
+                "kch": if is_code { json!(q) } else { json!(null) },
+                "teacher": if teacher.is_empty() { json!(null) } else { json!(teacher) },
+                "semester": s(args, "semester"),
+                "page": page,
+            });
+            if is_code {
+                filter["kcm"] = json!(null);
+            }
+            let mut out = host(ctx, "xk", "search", json!([filter]))?;
+            let raw = out.get("rows").cloned().unwrap_or_else(|| json!([]));
+            let mut rows: Vec<Value> = arr_of(&raw)
+                .iter()
+                .filter(|c| {
+                    q.is_empty()
+                        || is_code
+                        || !teacher.is_empty() && s(c, "name").contains(&q)
+                        || s(c, "name").contains(&q)
+                        || s(c, "code").contains(&q)
+                })
+                .map(|c| {
+                    let time = s(c, "time");
+                    let mut room = s(c, "room");
+                    if room.is_empty() {
+                        if let Some(i) = time.rfind(')') {
+                            room = time[i + 1..].trim().to_string();
+                        }
+                    }
+                    json!({ "code": s(c, "code"), "seq": s(c, "seq"), "name": s(c, "name"), "teacher": s(c, "teacher"), "credits": c.get("credits").cloned().unwrap_or(json!(0)), "time": time, "room": room, "remaining": c.get("remaining").cloned().unwrap_or(json!(null)), "capacity": c.get("capacity").cloned().unwrap_or(json!(null)), "teacherId": s(c, "teacherId") })
+                })
+                .collect();
+            // 教师过滤 + 本地课名筛选后若为空，但服务端确有行 → 该教师本学期没这门课（如实说）
+            let server_rows = arr_of(&raw).len();
+            let page_kind = s(&out, "pageKind");
+            out = json!({
+                "count": rows.len(),
+                "serverRowCount": server_rows,
+                "page": out.get("page").cloned().unwrap_or(json!(1)),
+                "hasMore": out.get("hasMore").cloned().unwrap_or(json!(false)),
+                "pageKind": page_kind,
+                "diag": if page_kind == "unknown" {
+                    let h: String = out.get("htmlHead").and_then(|v| v.as_str()).unwrap_or("").chars().take(120).collect();
+                    h
+                } else { String::new() },
+                "rows": rows,
+                "note": "time=星期节次(周次)——权威时间来源；room 仅个别行有；教室去 query_coursex detail=true 或 query_learn_courses 的 timeLocation 查；serverRowCount>0 而 count=0=该过滤组合无匹配（如该教师本学期无此课），如实告知勿重试同参数",
+            });
+            rows.clear();
+            out
+        }
+        "query_xk_selected" => {
+            let sem = s(args, "semester");
+            let out = if sem.is_empty() { host(ctx, "xk", "selected", json!([null]))? } else { host(ctx, "xk", "selected", json!([sem]))? };
+            let rows: Vec<Value> = arr_of(&out)
+                .iter()
+                .map(|c| json!({ "code": s(c, "code"), "name": s(c, "name"), "teacher": s(c, "teacher"), "time": s(c, "time"), "credits": c.get("credits").cloned().unwrap_or(json!(0)) }))
+                .collect();
+            json!({ "count": rows.len(), "rows": rows })
+        }
+        "query_xk_reviews" => {
+            let out = host(ctx, "xk", "reviews", json!([s(args, "course"), s(args, "teacher")]))?;
+            if out.is_null() {
+                json!({ "found": false, "note": "选课社区没有匹配该课名/教师的评价" })
+            } else {
+                out
+            }
+        }
+        "query_coursex" => {
+            // 人类流程单次完成：搜索（q=课名或教师名单关键词）→ 自动取前几条详情
+            // 把 timeLocation（星期节次+教室）合并进行。detail 参数仅保留 false 关闭。
+            let q = s(args, "q");
+            let sem = s(args, "semester");
+            let list = host(ctx, "coursex", "search", json!([q, sem]))?;
+            let mut rows: Vec<Value> = arr_of(&list)
+                .iter()
+                .take(6)
+                .map(|it| json!({ "id": s(it, "id"), "name": s(it, "name"), "teacher": s(it, "teacherName"), "timeLocation": "", "semesterId": s(it, "semesterId") }))
+                .collect();
+            let mut detail_err = String::new();
+            if s(args, "detail") != "false" {
+                for i in 0..rows.len().min(4) {
+                    let id = rows[i].get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if id.is_empty() {
+                        continue;
+                    }
+                    match host(ctx, "coursex", "detail", json!([id])) {
+                        Ok(d) => {
+                            let tl = d.get("timeLocation").cloned().unwrap_or_else(|| json!([]));
+                            if tl.is_array() && !arr_of(&tl).is_empty() {
+                                rows[i]["timeLocation"] = tl;
+                            }
+                        }
+                        Err(e) => detail_err = e,
+                    }
+                }
+            }
+            json!({
+                "count": rows.len(),
+                "rows": rows,
+                "detailErr": detail_err,
+                "note": "timeLocation=星期节次+教室（已自动取详情合并；为空=CourseX 未收录该班时间地点，如实告知）。q 单关键词（课名或教师名，不拼接）；跨学期传 semester",
+            })
         }
         "query_xk_catalog" => {
             // 服务端搜索（每页 20 行秒回）。教师名优先单独作过滤（更准；且绕开
