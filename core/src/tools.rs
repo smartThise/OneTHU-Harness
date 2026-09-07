@@ -463,9 +463,9 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&list)
                 .into_iter()
                 .take(20)
-                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "url": s(&it, "url") }))
+                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "link": format!("onethu-news://{}", s(&it, "xxid")) }))
                 .collect();
-            json!({ "rows": rows, "note": "每条新闻务必把 url 一并给用户（可点开原文），不要只报标题" })
+            json!({ "rows": rows, "note": "每条新闻用 markdown 链接把 link 给用户（[标题](link)，应用内直达新闻页）；不要给外部原文 URL" })
         }
         "read_news_article" => {
             let d = host(ctx, "info", "newsDetail", json!([s(args, "news_id")]))?;
@@ -745,9 +745,9 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&list)
                 .into_iter()
                 .take(20)
-                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "url": s(&it, "url") }))
+                .map(|it| json!({ "xxid": s(&it, "xxid"), "name": s(&it, "name"), "date": s(&it, "date"), "source": s(&it, "source"), "link": format!("onethu-news://{}", s(&it, "xxid")) }))
                 .collect();
-            json!({ "rows": rows, "note": "每条新闻务必把 url 一并给用户（可点开原文）" })
+            json!({ "rows": rows, "note": "每条新闻用 markdown 链接把 link 给用户（[标题](link)，应用内直达新闻页）；不要给外部原文 URL" })
         }
         "navigate" => {
             let params = args.get("params").cloned().unwrap_or(json!({}));
