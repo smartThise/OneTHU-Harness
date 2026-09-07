@@ -121,6 +121,27 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "reply_learn_thread",
+            desc: "在网络学堂讨论区某帖子下回帖（写操作，执行前会请用户确认；仅在用户明确要求回帖时使用）",
+            params: p(json!({
+                "wlkcid": {"type": "string"},
+                "threadId": {"type": "string"},
+                "content": {"type": "string"}
+            }), &["wlkcid", "threadId", "content"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "post_learn_thread",
+            desc: "在网络学堂某课程某版面发新帖（写操作，执行前会请用户确认；仅在用户明确要求发帖时使用）",
+            params: p(json!({
+                "wlkcid": {"type": "string"},
+                "bqid": {"type": "string"},
+                "title": {"type": "string"},
+                "content": {"type": "string"}
+            }), &["wlkcid", "bqid", "title", "content"]),
+            confirm: true,
+        },
+        ToolDef {
             name: "query_learn_semesters",
             desc: "查网络学堂学期 id 列表（跨学期查询用）",
             params: p(json!({}), &[]),
@@ -140,8 +161,11 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "query_learn_files",
-            desc: "查网络学堂某课程文件列表（course_keyword=课程名关键词，如 计算机组成）",
-            params: p(json!({ "course_keyword": {"type": "string"} }), &["course_keyword"]),
+            desc: "查网络学堂某课程文件列表（course_keyword=课程名关键词；往期学期课程必须带 semesterId，如春季课 = 2025-2026-2）",
+            params: p(json!({
+                "course_keyword": {"type": "string"},
+                "semesterId": {"type": "string", "description": "课程所属学期（往期课程必传，如 2025-2026-2）"}
+            }), &["course_keyword"]),
             confirm: false,
         },
         ToolDef {
@@ -412,7 +436,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "navigate",
-            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。资金类只读红线不拦导航：如校园卡充值界面 = navigate life + params {\"lifeTab\":\"card\"}（充值操作由用户在官方界面完成，助手不代充）",
+            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。网络学堂一键直达：learn-course {courseId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId}（具体作业）、learn-notice-detail {courseId, itemId}（具体通知）、learn-files {courseId}（文件列表）、learn-assignments/learn-notices（全列表）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
             params: p(json!({
                 "page": {"type": "string"},
                 "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}"}
@@ -519,6 +543,17 @@ fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, Stri
             let rec = recs.iter().find(|r| s(r, "resvUuid") == u).ok_or("resvUuid 不在最近记录中，请先 query_venue_records")?;
             Ok(format!("取消体育场馆预约：{} {}（{}）", s(rec, "scene"), s(rec, "time"), s(rec, "status")))
         }
+        "reply_learn_thread" => Ok(format!(
+            "在网络学堂帖子 {} 下回帖：{}",
+            s(args, "threadId"),
+            s(args, "content").chars().take(80).collect::<String>()
+        )),
+        "post_learn_thread" => Ok(format!(
+            "在网络学堂课程 {} 版面 {} 发新帖《{}》",
+            s(args, "wlkcid"),
+            s(args, "bqid"),
+            s(args, "title")
+        )),
         "book_kongjian" => Ok(format!(
             "预约宿舍公共空间：{}（联系人 {}，电话 {}）",
             s(args, "bookUrl"), s(args, "name"), s(args, "tel")
@@ -629,6 +664,14 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 .collect();
             json!({ "count": txs.len(), "netAmount": total, "note": "amount 正负为收支方向", "rows": rows, "truncated": txs.len() > 90 })
         }
+        "reply_learn_thread" => {
+            host(ctx, "learn", "reply", json!([s(args, "wlkcid"), s(args, "threadId"), s(args, "content")]))?;
+            json!({ "replied": true, "threadId": s(args, "threadId") })
+        }
+        "post_learn_thread" => {
+            host(ctx, "learn", "post", json!([s(args, "wlkcid"), s(args, "bqid"), s(args, "title"), s(args, "content")]))?;
+            json!({ "posted": true, "title": s(args, "title") })
+        }
         "query_learn_semesters" => json!({ "semesters": host(ctx, "learn", "semesters", json!([]))? }),
         "query_learn_courses" => {
             let sem = s(args, "semesterId");
@@ -665,7 +708,9 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
         }
         "query_learn_files" => {
             let kw = s(args, "course_keyword");
-            let courses = arr_of(&host(ctx, "learn", "courses", json!([null]))?.get("courses").cloned().unwrap_or_else(|| json!([])));
+            let sem = s(args, "semesterId");
+            let sem_arg = if sem.is_empty() { json!([null]) } else { json!([sem]) };
+            let courses = arr_of(&host(ctx, "learn", "courses", sem_arg)?.get("courses").cloned().unwrap_or_else(|| json!([])));
             let hit = courses.iter().find(|c| s(c, "name").contains(&kw))
                 .ok_or_else(|| format!("找不到课程「{kw}」；可用：{}", courses.iter().map(|c| s(c, "name")).collect::<Vec<_>>().join("、")))?;
             let files = host(ctx, "learn", "files", json!([s(hit, "id")]))?;

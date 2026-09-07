@@ -22,7 +22,8 @@
     "venue:read",
     "venue:book",
     "xk:read",
-    "kongjian:book"
+    "kongjian:book",
+    "learn:write"
   ],
   "settings": [
     {
