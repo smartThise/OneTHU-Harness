@@ -222,9 +222,27 @@ fn bridge_call_timeout(
             }
         });
     }
-    let out = rx
-        .recv_timeout(Duration::from_millis(timeout_ms))
-        .unwrap_or_else(|_| Err(format!("宿主桥应答超时（{}s）", timeout_ms / 1000)));
+    let t0 = std::time::Instant::now();
+    let out = match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(v) => {
+            eprintln!(
+                "[harness] ✓ 桥回执 #{}（{}ms）",
+                rid,
+                t0.elapsed().as_millis()
+            );
+            v
+        }
+        Err(_) => {
+            eprintln!(
+                "[harness] ✗ 桥调用 {}.{}（#{}）超时 {}s",
+                ns,
+                method,
+                rid,
+                timeout_ms / 1000
+            );
+            Err(format!("宿主桥应答超时（{}s）", timeout_ms / 1000))
+        }
+    };
     done.store(true, Ordering::Relaxed);
     out
 }
