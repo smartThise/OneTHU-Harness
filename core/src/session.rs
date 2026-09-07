@@ -147,10 +147,28 @@ impl Store {
         }
         self.epoch.set(self.loaded_epoch.get() + 1);
         self.loaded_epoch.set(self.epoch.get());
-        let payload = match serde_json::to_value(self) {
+        let mut payload = match serde_json::to_value(self) {
             Ok(v) => v,
             Err(_) => return,
         };
+        // 落盘瘦身（R9）：blob 每次 save 全量往返，必须封顶——每会话留最近 80 条消息 / 30 条 trace
+        if let Some(sessions) = payload.get_mut("sessions").and_then(|v| v.as_array_mut()) {
+            for sess in sessions.iter_mut() {
+                if let Some(msgs) = sess.get_mut("messages").and_then(|v| v.as_array_mut()) {
+                    let n = msgs.len();
+                    if n > 80 {
+                        *msgs = msgs.split_off(n - 80);
+                    }
+                }
+                if let Some(trace) = sess.get_mut("trace").and_then(|v| v.as_array_mut()) {
+                    let n = trace.len();
+                    if n > 30 {
+                        *trace = trace.split_off(n - 30);
+                    }
+                }
+            }
+        }
+        let payload = payload;
         // 容量兜底：序列化 > 1.2MB 时逐步丢最老会话（不动 active）
         let mut payload = payload;
         let active_id = payload
