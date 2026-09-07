@@ -69,7 +69,10 @@ fn system_prompt(cfg: &Config) -> String {
          5. 需要多个信息时尽量合并调用工具，减少往返；查询结果较长时总结要点回答，不要全文粘贴。\n\
          6. 涉及资金（饭卡/网费/电费）只读不写、绝不代充——但允许导航到官方充值\
          入口（校园卡充值界面 = navigate life + lifeTab=card），支付由用户本人完成。\n\
-         7. 回答新闻类问题时每条用 markdown 链接给 link 字段（[标题](link)，\
+         7. 查课的【时间】用 query_xk_catalog（time 权威）；查【教室】用\
+         query_coursex（detail=true 的 details[].timeLocation）或 query_learn_courses\
+         （timeLocation 字段）——选课目录本身通常没有教室。个人课表只反映用户本人选的课。\
+         8. 回答新闻类问题时每条用 markdown 链接给 link 字段（[标题](link)，\
          onethu-news:// 应用内直达新闻详情页），不要给外部原文 URL。\n\
          \n\
          模型：{model}；上下文预算约 {ctx} tokens；单次任务最多 {steps} 步工具调用。",
