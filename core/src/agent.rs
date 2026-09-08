@@ -73,6 +73,8 @@ fn system_prompt(cfg: &Config) -> String {
          都有）；没选的课→query_coursex（q=课名或教师名，就这两个关键词，\
          最多换换学期 semester），rows[].timeLocation 即时间+教室。\
          网络学堂/选课目录不是查教室的路径。\
+         个人日程（班会/活动/自习等，含云日历）用 query_agenda；新建/删除\
+         日程用 add_schedule/remove_schedule（写操作需用户确认）。\
          8. 回答新闻类问题时每条用 markdown 链接给 link 字段（[标题](link)，\
          onethu-news:// 应用内直达新闻详情页），不要给外部原文 URL。\n\
          \n\

@@ -77,6 +77,37 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_agenda",
+            desc: "查我的日程（云同步日历 + 本地手动日程：班会/活动/自习等个人日程都在这，含 OneTHU 或系统日历里添加的）。start/end 接受 今天/明天/下周三/2025-09-08；缺省今天起 14 天。上课时间地点另查 query_schedule",
+            params: p(json!({
+                "start": {"type": "string", "description": "起始日期，如 明天 / 2025-09-08"},
+                "end": {"type": "string", "description": "结束日期（含）"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "add_schedule",
+            desc: "新建日程并同步到云日历（系统日历/其他设备可见；未配置云同步则存本地）。例如：明天 14:00-15:30 班会",
+            params: p(json!({
+                "title": {"type": "string", "description": "日程标题"},
+                "date": {"type": "string", "description": "日期：明天 / 2025-09-08"},
+                "start": {"type": "string", "description": "开始 HH:MM（全天日程可省）"},
+                "end": {"type": "string", "description": "结束 HH:MM（全天日程可省）"},
+                "location": {"type": "string", "description": "地点（可选）"},
+                "note": {"type": "string", "description": "备注（可选）"},
+                "allDay": {"type": "boolean", "description": "全天日程（可选）"}
+            }), &["title", "date"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "remove_schedule",
+            desc: "删除日程（uid 来自 query_agenda 返回；云端/本地自动路由）",
+            params: p(json!({
+                "uid": {"type": "string", "description": "query_agenda 返回的 uid"}
+            }), &["uid"]),
+            confirm: true,
+        },
+        ToolDef {
             name: "query_exams",
             desc: "查考试安排（课程/日期/时间/地点）",
             params: p(json!({}), &[]),
@@ -565,6 +596,22 @@ fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, Stri
                 .ok_or("未找到匹配的预约记录，请先 query_kongjian_my")?;
             Ok(format!("取消公共空间预约：{}（{}）", s(rec, "spaceName"), s(rec, "time")))
         }
+        "add_schedule" => {
+            let date = {
+                let raw = s(args, "date");
+                match resolve_date(&raw) {
+                    Some(d) if d == today() => "今天".to_string(),
+                    Some(d) if d == today() + Duration::days(1) => "明天".to_string(),
+                    Some(d) => d.format("%Y-%m-%d").to_string(),
+                    None => raw,
+                }
+            };
+            let all_day = args.get("allDay").and_then(|v| v.as_bool()).unwrap_or(false);
+            let when = if all_day { format!("{}（全天）", date) } else { format!("{} {}-{}", date, or_default(&s(args, "start"), "08:00"), or_default(&s(args, "end"), "09:35")) };
+            let loc = s(args, "location");
+            Ok(format!("新建日程「{}」：{}{}", s(args, "title"), when, if loc.is_empty() { String::new() } else { format!(" @{}", loc) }))
+        }
+        "remove_schedule" => Ok(format!("删除日程（uid={}）", s(args, "uid"))),
         _ => Err(format!("未知确认工具：{name}")),
     }
 }
@@ -631,6 +678,43 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 resolve_date(&s(args, "end")).ok_or("无法理解 end 日期")?
             };
             host(ctx, "info", "schedule", json!([start.format("%Y-%m-%d").to_string(), end.format("%Y-%m-%d").to_string()]))?
+        }
+        "query_agenda" => {
+            let start = if s(args, "start").is_empty() {
+                today()
+            } else {
+                resolve_date(&s(args, "start")).ok_or("无法理解 start 日期")?
+            };
+            let end = if s(args, "end").is_empty() {
+                start + Duration::days(13)
+            } else {
+                resolve_date(&s(args, "end")).ok_or("无法理解 end 日期")?
+            };
+            host(ctx, "cal", "agenda", json!([start.format("%Y-%m-%d").to_string(), end.format("%Y-%m-%d").to_string()]))?
+        }
+        "add_schedule" => {
+            let date = resolve_date(&s(args, "date")).ok_or("无法理解 date 日期")?;
+            let all_day = args.get("allDay").and_then(|v| v.as_bool()).unwrap_or(false);
+            let start = if all_day { "00:00".to_string() } else { or_default(&s(args, "start"), "08:00") };
+            let end = if all_day { "01:00".to_string() } else { or_default(&s(args, "end"), "09:35") };
+            let mut opts = json!({});
+            if !s(args, "location").is_empty() {
+                opts["location"] = json!(s(args, "location"));
+            }
+            if !s(args, "note").is_empty() {
+                opts["note"] = json!(s(args, "note"));
+            }
+            if all_day {
+                opts["allDay"] = json!(true);
+            }
+            host(ctx, "cal", "add", json!([s(args, "title"), date.format("%Y-%m-%d").to_string(), start, end, opts]))?
+        }
+        "remove_schedule" => {
+            let uid = s(args, "uid");
+            if uid.is_empty() {
+                return Err("缺少 uid（先用 query_agenda 拿日程的 uid 字段）".to_string());
+            }
+            host(ctx, "cal", "remove", json!([uid]))?
         }
         "query_exams" => host(ctx, "info", "exams", json!([]))?,
         "query_deadlines" => host(ctx, "info", "deadlines", json!([]))?,
