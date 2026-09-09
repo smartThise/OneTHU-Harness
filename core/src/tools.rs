@@ -162,6 +162,45 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: true,
         },
         ToolDef {
+            name: "query_cloud_files",
+            desc: "查我的清华云盘（Seafile）。不带参数=列出资料库；带 repo（库名）=列该库根目录；带 repo+path=列子目录。文件操作（上传/分享）的 repo/path 参数从这里拿",
+            params: p(json!({
+                "repo": {"type": "string", "description": "资料库名（不带参数时返回的 name）"},
+                "path": {"type": "string", "description": "库内目录（如 /课件，缺省 /）"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "search_cloud_files",
+            desc: "清华云盘库内搜索文件名（服务器端，覆盖整库历史文件）",
+            params: p(json!({
+                "repo": {"type": "string", "description": "资料库名"},
+                "query": {"type": "string", "description": "文件名关键词"}
+            }), &["repo", "query"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "cloud_share_file",
+            desc: "生成云盘文件的分享链接（复制给他人可下载；默认永久有效）",
+            params: p(json!({
+                "repo": {"type": "string", "description": "资料库名"},
+                "path": {"type": "string", "description": "文件完整路径（如 /课件/第一周.pdf）"},
+                "days": {"type": "integer", "description": "有效天数（0=永久，缺省 0）"}
+            }), &["repo", "path"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "cloud_upload_file",
+            desc: "上传本地文件到清华云盘（本地路径支持 ~ 前缀，如 ~/Downloads/报告.pdf）",
+            params: p(json!({
+                "localPath": {"type": "string", "description": "本地文件路径（支持 ~）"},
+                "repo": {"type": "string", "description": "目标资料库名"},
+                "path": {"type": "string", "description": "目标目录（缺省 /，不存在会报错；先 query_cloud_files 确认）"},
+                "replace": {"type": "boolean", "description": "同名覆盖（缺省 false）"}
+            }), &["localPath", "repo"]),
+            confirm: true,
+        },
+        ToolDef {
             name: "query_exams",
             desc: "查考试安排（课程/日期/时间/地点）",
             params: p(json!({}), &[]),
@@ -557,6 +596,22 @@ pub fn is_confirm(name: &str) -> bool {
 /// 两段式确认的确认摘要（把对象解析好再给用户看）
 fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, String> {
     match name {
+        "cloud_share_file" => {
+            Ok(format!(
+                "生成云盘分享链接：{}{}（{}）",
+                s(args, "repo"),
+                s(args, "path"),
+                if n(args, "days") > 0 { format!("{} 天有效", n(args, "days")) } else { "永久有效".into() }
+            ))
+        }
+        "cloud_upload_file" => {
+            Ok(format!(
+                "上传 {} 到云盘 {}{}",
+                s(args, "localPath"),
+                s(args, "repo"),
+                if s(args, "path").is_empty() || s(args, "path") == "/" { "（根目录）".into() } else { s(args, "path") }
+            ))
+        }
         "send_mail" => {
             let to = s(args, "to");
             let subject = s(args, "subject");
@@ -867,6 +922,92 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 })
                 .collect();
             json!({ "query": query, "count": lines.len(), "mails": lines })
+        }
+        "query_cloud_files" => {
+            let repos = arr_of(&host(ctx, "cloud", "repos", json!([]))?);
+            let repo_arg = s(args, "repo");
+            if repo_arg.is_empty() {
+                let names: Vec<String> = repos
+                    .iter()
+                    .map(|r| format!("{}（{}，{}）", s(r, "name"), fmt_size(r.get("size").and_then(|x| x.as_i64()).unwrap_or(0)), repos.len().to_string()))
+                    .collect();
+                let _ = &names;
+                let lines: Vec<String> = repos
+                    .iter()
+                    .map(|r| {
+                        let sz = r.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+                        format!("{} | {} | {}", s(r, "name"), s(r, "id"), fmt_size(sz))
+                    })
+                    .collect();
+                json!({
+                    "count": repos.len(),
+                    "repos": lines,
+                    "hint": "带 repo=库名 再调一次可列其根目录"
+                })
+            } else {
+                let repo = find_cloud_repo(&repos, &repo_arg)?;
+                let path = {
+                    let p = s(args, "path");
+                    if p.is_empty() { "/".to_string() } else if p.starts_with('/') { p } else { format!("/{p}") }
+                };
+                let entries = arr_of(&host(ctx, "cloud", "list", json!([s(repo, "id"), path]))?);
+                let lines: Vec<String> = entries
+                    .iter()
+                    .map(|e| {
+                        let kind = s(e, "kind");
+                        let sz = e.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+                        format!(
+                            "[{}] {}{}",
+                            if kind == "dir" { "目录" } else { "文件" },
+                            s(e, "name"),
+                            if kind == "dir" { String::new() } else { format!("（{}）", fmt_size(sz)) }
+                        )
+                    })
+                    .collect();
+                json!({ "repo": s(repo, "name"), "path": path, "count": lines.len(), "entries": lines })
+            }
+        }
+        "search_cloud_files" => {
+            let repos = arr_of(&host(ctx, "cloud", "repos", json!([]))?);
+            let repo = find_cloud_repo(&repos, &s(args, "repo"))?;
+            let query = s(args, "query");
+            let hits = arr_of(&host(ctx, "cloud", "search", json!([s(repo, "id"), query]))?);
+            let lines: Vec<String> = hits
+                .iter()
+                .map(|e| {
+                    let sz = e.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+                    format!("{}（{}）", s(e, "name"), fmt_size(sz))
+                })
+                .collect();
+            json!({ "repo": s(repo, "name"), "query": query, "count": lines.len(), "results": lines })
+        }
+        "cloud_share_file" => {
+            let repos = arr_of(&host(ctx, "cloud", "repos", json!([]))?);
+            let repo = find_cloud_repo(&repos, &s(args, "repo"))?;
+            let path = {
+                let p = s(args, "path");
+                if p.starts_with('/') { p } else { format!("/{p}") }
+            };
+            let days = n(args, "days");
+            let r = host(ctx, "cloud", "share", json!([s(repo, "id"), path, days]))?;
+            json!({ "success": true, "link": s(&r, "link") })
+        }
+        "cloud_upload_file" => {
+            let repos = arr_of(&host(ctx, "cloud", "repos", json!([]))?);
+            let repo = find_cloud_repo(&repos, &s(args, "repo"))?;
+            let parent = {
+                let p = s(args, "path");
+                if p.is_empty() || p == "/" { "/".to_string() } else if p.starts_with('/') { p } else { format!("/{p}") }
+            };
+            let local = s(args, "localPath");
+            let replace = args.get("replace").and_then(|x| x.as_bool()).unwrap_or(false);
+            let r = host(ctx, "cloud", "upload", json!([s(repo, "id"), parent, local, replace]))?;
+            json!({
+                "success": true,
+                "repo": s(repo, "name"),
+                "path": parent,
+                "size": r.get("size").and_then(|x| x.as_i64()).unwrap_or(-1)
+            })
         }
         "send_mail" => {
             let to = s(args, "to");
@@ -1765,4 +1906,40 @@ fn fmt_mail_ms(ms: i64) -> String {
         .and_then(|tz| chrono::DateTime::from_timestamp(ms.div_euclid(1000), 0).map(|d| d.with_timezone(&tz)))
         .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| "?".into())
+}
+
+/** 云盘资料库按名/ID 定位（精确名 → 前缀唯一 → ID） */
+fn find_cloud_repo<'a>(repos: &'a [Value], want: &str) -> Result<&'a Value, String> {
+    let exact: Vec<&Value> = repos.iter().filter(|r| s(r, "name") == want).collect();
+    if let [r] = exact.as_slice() {
+        return Ok(r);
+    }
+    let prefix: Vec<&Value> = repos.iter().filter(|r| s(r, "name").contains(want)).collect();
+    if let [r] = prefix.as_slice() {
+        return Ok(r);
+    }
+    if let Some(r) = repos.iter().find(|r| s(r, "id") == want) {
+        return Ok(r);
+    }
+    let names: Vec<String> = repos.iter().map(|r| s(r, "name")).collect();
+    Err(format!("云盘里找不到资料库「{want}」，可用：{}", names.join("、")))
+}
+
+/** 字节数 → 人类可读（云盘工具输出用） */
+fn fmt_size(b: i64) -> String {
+    if b < 0 {
+        return "-".into();
+    }
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = b as f64;
+    let mut i = 0usize;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
 }

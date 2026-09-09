@@ -32,12 +32,62 @@ const server = http.createServer((req, res) => {
     const lastUserMsg = [...reqJson.messages].reverse().find((m) => m.role === "user");
     const mailQ = lastUserMsg && /最新邮件|我的邮件/.test(lastUserMsg.content);
     const mailRead = lastUserMsg && /打开第一封/.test(lastUserMsg.content);
+    const cloudQ = lastUserMsg && /云盘里有什么/.test(lastUserMsg.content);
+    const cloudShare = lastUserMsg && /分享云盘里的/.test(lastUserMsg.content);
     const booking = lastUserMsg && lastUserMsg.content.includes("订");
     if (lastUserMsg && lastUserMsg.content.includes("慢速测试")) {
       // R9 回归触发器：模拟网关慢峰——chat 占住主循环 2s
       await sleep(2000);
     }
-    if (mailRead) {
+    const cloudToolCount = reqJson.messages.filter((m) => m.role === "tool").length;
+    if (cloudQ) {
+      // 云盘场景：①列资料库 → ②列课件库根目录 → ③总结
+      if (cloudToolCount === 0) {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_c1", type: "function", function: { name: "query_cloud_files", arguments: "{}" } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 240, completion_tokens: 15 } });
+      } else if (cloudToolCount === 1) {
+        assert.ok(lastToolMsg.content.includes("个人云盘"), "第一步应返回资料库列表");
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_c2", type: "function", function: { name: "query_cloud_files", arguments: '{"repo":"课程课件库"}' } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 300, completion_tokens: 16 } });
+      } else {
+        assert.ok(lastToolMsg.content.includes("第一周.pdf"), "第二步应返回目录列表");
+        send({ choices: [{ delta: { content: "你有两个库：个人云盘和课程课件库；课件库里有第一周.pdf（1.5 MB）。" } }] });
+        send({ choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 380, completion_tokens: 22 } });
+      }
+    } else if (cloudShare) {
+      // 云盘分享场景（两段式确认）：①query 拿到文件 → ②cloud_share_file（确认型，停）
+      if (!lastToolMsg) {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_s1", type: "function", function: { name: "query_cloud_files", arguments: '{"repo":"课程课件库"}' } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 250, completion_tokens: 14 } });
+      } else {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_s2", type: "function", function: { name: "cloud_share_file", arguments: '{"repo":"课程课件库","path":"/第一周.pdf"}' } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 330, completion_tokens: 18 } });
+      }
+    } else if (mailRead) {
       // 读信场景：read_mail（uid 来自上一轮 query_mails 的列表）
       if (!(lastToolMsg && lastToolMsg.content.includes("CI 挂了"))) {
         send({
@@ -251,6 +301,42 @@ function facade(ns, method, args) {
       assert.equal(args[1], "GitHub", "搜索词应透传");
       return [{ uid: 1755410750, subject: "[smartThise] GitHub 通知", from: "notifications@github.com", dateMs: 1788966113000, seen: false }];
     }
+    case "cloud.repos": {
+      return [
+        { id: "r-001", name: "个人云盘", mtime: 1788960000, size: 52_428_800 },
+        { id: "r-002", name: "课程课件库", mtime: 1788950000, size: 1_572_864_000 },
+      ];
+    }
+    case "cloud.list": {
+      assert.ok(args[0], "list 需要 repoId");
+      if (args[0] === "r-001") return [{ name: "照片", kind: "dir", size: 0, mtime: 1788900000 }];
+      assert.equal(args[0], "r-002", "库名应解析到 id");
+      assert.equal(args[1], "/", "缺省应列根目录");
+      return [
+        { name: "第一周", kind: "dir", size: 0, mtime: 1788910000 },
+        { name: "第一周.pdf", kind: "file", size: 1_572_864, mtime: 1788920000 },
+      ];
+    }
+    case "cloud.search": {
+      assert.equal(args[0], "r-002");
+      assert.equal(args[1], "第一周", "搜索词应透传");
+      return [{ name: "第一周.pdf", kind: "file", size: 1_572_864, mtime: 1788920000 }];
+    }
+    case "cloud.share": {
+      assert.equal(args[0], "r-002", "share 的 repoId 应来自解析");
+      assert.equal(args[1], "/第一周.pdf", "路径应补 / 前缀");
+      assert.equal(args[2], 0, "缺省应永久有效");
+      return { link: "https://cloud.tsinghua.edu.cn/f/simtoken/", token: "simtoken" };
+    }
+    case "cloud.upload": {
+      assert.equal(args[0], "r-002");
+      assert.equal(args[1], "/", "缺省目录应归一为 /");
+      assert.equal(args[2], "~/Downloads/报告.pdf", "本地路径应透传（Rust 侧展开 ~）");
+      return { size: 10240 };
+    }
+    case "cloud.download": {
+      return "/Users/test/Downloads/第一周.pdf";
+    }
     case "mail.send": {
       assert.equal(args[0], "teacher@mails.tsinghua.edu.cn");
       assert.equal(args[2], "作业缓交申请");
@@ -414,6 +500,27 @@ async function main() {
     const mailReadCall = hostCalls.find((c) => c.ns === "mail" && c.method === "read");
     assert.ok(mailReadCall, "门面应收到 mail.read");
     console.log("✓ 读信正文：", rd.result.answer);
+  }
+
+  // 6.9) 云盘三件套：列库 → 列目录 → 两段式分享确认
+  {
+    await request("run", { command: "new_session" });
+    const cq = await run("chat", "看看我的云盘里有什么");
+    assert.equal(cq.result?.ok, true, `云盘查询应成功：${JSON.stringify(cq.result)}`);
+    assert.ok(cq.result.answer.includes("课程课件库"), "回答应含库名");
+    assert.ok(cq.result.answer.includes("第一周.pdf"), "回答应含文件名");
+    const reposCall = hostCalls.find((c) => c.ns === "cloud" && c.method === "repos");
+    assert.ok(reposCall, "门面应收到 cloud.repos");
+    const listCall = hostCalls.find((c) => c.ns === "cloud" && c.method === "list");
+    assert.ok(listCall, "门面应收到 cloud.list");
+    console.log("✓ 云盘查询：", cq.result.answer);
+
+    const sh = await run("chat", "分享云盘里的第一周.pdf");
+    assert.equal(sh.result?.ok, true);
+    assert.ok(sh.result.confirm?.summary, "分享应返回确认卡片");
+    assert.ok(sh.result.confirm.summary.includes("第一周.pdf"), "摘要应含文件名");
+    assert.ok(sh.result.confirm.summary.includes("永久"), "摘要应说明永久有效");
+    console.log("✓ 云盘分享待确认：", sh.result.confirm.summary);
   }
 
   // R9 关键回归：慢 chat 占用期间，控制命令必须照常秒回（主循环永不阻塞）

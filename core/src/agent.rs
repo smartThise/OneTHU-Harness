@@ -79,6 +79,10 @@ fn system_prompt(cfg: &Config) -> String {
          邮件用 query_mails、看正文用 read_mail（uid 来自列表）、找旧邮件用\
          search_mails、代发邮件用 send_mail（写操作需用户确认）。用户说「我的\
          邮件」「最新邮件」时就是走这套，不是网络学堂通知。\
+         清华云盘（Seafile）：列资料库/浏览目录用 query_cloud_files（不带参\
+         数=全部资料库）、找文件用 search_cloud_files（库内搜文件名）、分享\
+         链接用 cloud_share_file、上传本地文件用 cloud_upload_file（后两个\
+         写操作需用户确认；本地路径支持 ~/Downloads/x.pdf 写法）。\
          8. 回答新闻类问题时每条用 markdown 链接给 link 字段（[标题](link)，\
          onethu-news:// 应用内直达新闻详情页），不要给外部原文 URL。\n\
          \n\
