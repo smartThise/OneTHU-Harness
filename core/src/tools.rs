@@ -903,7 +903,22 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&out)
                 .iter()
                 .take(30)
-                .map(|h| json!({ "course": s(h, "courseName"), "title": s(h, "title"), "due": s(h, "endTime"), "status": s(h, "status"), "submitted": h.get("submitted").cloned().unwrap_or(json!(false)) }))
+                .map(|h| {
+                    // facade 回传核心 Homework 形状（deadline/lateDeadline/…，无 endTime/status 字段）
+                    let submitted = h.get("submitted").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let graded = h.get("graded").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let status = if graded { "已批" } else if submitted { "已交" } else { "未交" };
+                    let late_due = s(h, "lateDeadline");
+                    json!({
+                        "course": s(h, "courseName"), "title": s(h, "title"),
+                        "due": s(h, "deadline"),
+                        "lateDue": if late_due.is_empty() { json!(null) } else { json!(late_due) },
+                        "published": s(h, "publishTime"),
+                        "status": status, "submitted": submitted, "graded": graded,
+                        "submitTime": s(h, "submitTime"),
+                        "grade": h.get("grade").cloned().unwrap_or(json!(null)),
+                    })
+                })
                 .collect();
             json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 30 })
         }
@@ -913,7 +928,16 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&out)
                 .iter()
                 .take(20)
-                .map(|n| json!({ "course": s(n, "courseName"), "title": s(n, "title"), "time": s(n, "time"), "hasDetail": s(n, "content") != "" }))
+                .map(|n| {
+                    let exp = s(n, "expireTime");
+                    json!({
+                        "course": s(n, "courseName"), "title": s(n, "title"),
+                        "publisher": s(n, "publisher"), "time": s(n, "publishTime"),
+                        "expireTime": if exp.is_empty() { json!(null) } else { json!(exp) },
+                        "important": n.get("important").and_then(|v| v.as_bool()).unwrap_or(false),
+                        "hasDetail": s(n, "content") != "",
+                    })
+                })
                 .collect();
             json!({ "count": rows.len(), "rows": rows, "truncated": rows.len() >= 20 })
         }
@@ -928,7 +952,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let rows: Vec<Value> = arr_of(&files)
                 .iter()
                 .take(25)
-                .map(|f| json!({ "title": s(f, "title"), "size": s(f, "size"), "time": s(f, "time") }))
+                .map(|f| json!({ "title": s(f, "title"), "size": s(f, "size"), "time": s(f, "uploadTime") }))
                 .collect();
             json!({ "course": s(hit, "name"), "count": rows.len(), "rows": rows })
         }

@@ -75,6 +75,26 @@ const server = http.createServer((req, res) => {
         });
         send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 320, completion_tokens: 22 } });
       }
+    } else if (lastUserMsg && lastUserMsg.content.includes("查作业")) {
+      // 作业 due 字段回归（endTime→deadline 字段名适配，状态由 submitted/graded 派生）
+      if (!lastToolMsg) {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_h1", type: "function", function: { name: "query_learn_homework", arguments: "{}" } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 160, completion_tokens: 12 } });
+      } else {
+        assert.ok(lastToolMsg.content.includes("2026-09-20 23:59"), "due 应映射核心 Homework.deadline 字段: " + lastToolMsg.content.slice(0, 300));
+        assert.ok(lastToolMsg.content.includes("未交"), "未交作业状态应派生");
+        assert.ok(lastToolMsg.content.includes("已批"), "已批作业状态应派生");
+        assert.ok(!/"due":""/.test(lastToolMsg.content), "due 不得为空（旧 bug：读 endTime 恒空）");
+        assert.ok(lastToolMsg.content.includes("2026-09-23 23:59"), "迟交截止 lateDue 应透传");
+        send({ choices: [{ delta: { content: "最近一门作业截止 2026-09-20 23:59。" } }] });
+        send({ choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 280, completion_tokens: 15 } });
+      }
     } else if (!lastToolMsg) {
       // 卡余额场景第 1 轮：要求调用 query_card_balance（带 reasoning_content——v4 思考模型常态）
       send({ choices: [{ delta: { reasoning_content: "先查余额再回答。" } }] });
@@ -160,6 +180,21 @@ function facade(ns, method, args) {
       assert.equal(ch.date, undefined, "未传 date 不得出现在修改集（保留原日期）");
       assert.equal(ch.allDay, undefined, "未传 allDay 不得出现在修改集");
       return { uid: args[0], where: "cloud" };
+    }
+    case "learn.homework": {
+      // 核心 Homework 形状（packages/core learn/types.ts）：deadline 字段，无 endTime
+      return [
+        {
+          id: "hw1", courseId: "c1", courseName: "Rust 程序设计", title: "第 3 次作业",
+          deadline: "2026-09-20 23:59", lateDeadline: "2026-09-23 23:59",
+          publishTime: "2026-09-10 08:00", submitted: false, graded: false, content: "",
+        },
+        {
+          id: "hw2", courseId: "c1", courseName: "Rust 程序设计", title: "第 2 次作业",
+          deadline: "2026-09-13 23:59", publishTime: "2026-09-03 08:00",
+          submitted: true, graded: true, grade: 96, submitTime: "2026-09-12 21:40", content: "",
+        },
+      ];
     }
     default: throw new Error(`模拟器未实现：${ns}.${method}`);
   }
@@ -289,6 +324,15 @@ async function main() {
     assert.ok(ecf.result.answer.includes("已执行"), "应报告执行成功");
     assert.ok(ecf.result.answer.includes("云日历"), "结果应报告存储位置（云日历）");
     console.log("✓ 改日程确认执行：", ecf.result.answer.split("\n")[0]);
+  }
+
+  // 6.7) 作业 due 字段回归（旧 bug：读 endTime 恒空 → 模型答「截止时间为空」）
+  {
+    await request("run", { command: "new_session" });
+    const hw = await run("chat", "这周有什么作业要交查作业");
+    assert.equal(hw.result?.ok, true, `查作业应成功：${JSON.stringify(hw.result)}`);
+    assert.ok(hw.result.answer.includes("2026-09-20"), "回答应引用映射后的截止时间: " + hw.result.answer);
+    console.log("✓ 作业 due 映射：", hw.result.answer);
   }
 
   // R9 关键回归：慢 chat 占用期间，控制命令必须照常秒回（主循环永不阻塞）
