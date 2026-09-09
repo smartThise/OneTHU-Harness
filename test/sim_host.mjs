@@ -48,6 +48,33 @@ const server = http.createServer((req, res) => {
         }],
       });
       send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 401, completion_tokens: 31 } });
+    } else if (lastUserMsg && lastUserMsg.content.includes("改日程")) {
+      // 改日程场景（日程四件套补齐：查/建/删之外的「改」）：①query_agenda 拿 uid → ②edit_schedule（确认型，停）
+      if (!lastToolMsg) {
+        send({ choices: [{ delta: { reasoning_content: "先查日程拿 uid。" } }] });
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_e1", type: "function", function: { name: "query_agenda", arguments: '{"start":"明天","end":"明天"}' } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 180, completion_tokens: 14 } });
+      } else {
+        assert.ok(lastToolMsg.content.includes("onethu-edit-test"), "第 2 轮应拿到含 uid 的日程行");
+        send({ choices: [{ delta: { reasoning_content: "改时间并清除地点。" } }] });
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0, id: "call_e2", type: "function",
+                function: { name: "edit_schedule", arguments: '{"uid":"onethu-edit-test@onethu","start":"16:00","end":"17:30","location":""}' },
+              }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 320, completion_tokens: 22 } });
+      }
     } else if (!lastToolMsg) {
       // 卡余额场景第 1 轮：要求调用 query_card_balance（带 reasoning_content——v4 思考模型常态）
       send({ choices: [{ delta: { reasoning_content: "先查余额再回答。" } }] });
@@ -115,6 +142,25 @@ function facade(ns, method, args) {
       return { status: 1, msg: "预约成功" };
     }
     case "library.records": return [{ id: "R1", pos: "北馆 3F A001", time: "明天 08:00", status: "已预约" }];
+    case "cal.agenda": {
+      // ±400 天窗口内恒返回一条可编辑的云端日程（date 与请求窗口无关，仅用于摘要展示）
+      return [{
+        uid: "onethu-edit-test@onethu", title: "班会", date: "2027-06-02", start: "14:00", end: "15:30",
+        allDay: false, location: "李文正馆", note: "", source: "cloud",
+      }];
+    }
+    case "cal.edit": {
+      // 端到端断言：修改集只含要改的字段；显式空串保留（facade 语义：location 空串=清除）
+      assert.equal(args[0], "onethu-edit-test@onethu", "edit 的 uid 应来自 agenda 行");
+      const ch = args[1] ?? {};
+      assert.equal(ch.start, "16:00", "start 应为解析后的 HH:MM");
+      assert.equal(ch.end, "17:30", "end 应为解析后的 HH:MM");
+      assert.equal(ch.location, "", "显式空 location 应原样传（清除语义）");
+      assert.equal(ch.title, undefined, "未传 title 不得出现在修改集");
+      assert.equal(ch.date, undefined, "未传 date 不得出现在修改集（保留原日期）");
+      assert.equal(ch.allDay, undefined, "未传 allDay 不得出现在修改集");
+      return { uid: args[0], where: "cloud" };
+    }
     default: throw new Error(`模拟器未实现：${ns}.${method}`);
   }
 }
@@ -223,6 +269,27 @@ async function main() {
   assert.ok(cf.result.answer.includes("已执行"), "应报告执行成功");
   // facade.library.book 内已断言 seat 是真实元素（id=1001）且 sectionId=11
   console.log("✓ 两段式确认执行：", cf.result.answer.split("\n")[0]);
+
+  // 6.6) 改日程（日程四件套补齐）：agenda 拿 uid → edit 确认卡片（旧值→新值）→ 确认执行
+  {
+    await request("run", { command: "new_session" });
+    const ed = await run("chat", "帮我把明天的班会改日程到下午四点到五点半，别带地点了");
+    assert.equal(ed.result?.ok, true, `改日程首轮应成功：${JSON.stringify(ed.result)}`);
+    assert.ok(ed.result.confirm?.summary, "edit_schedule 应返回确认卡片摘要");
+    const sum = ed.result.confirm.summary;
+    assert.ok(sum.includes("班会"), "摘要应含日程标题");
+    assert.ok(sum.includes("14:00-15:30"), "摘要应含原时间段（旧值）: " + sum);
+    assert.ok(sum.includes("16:00-17:30"), "摘要应含新时间段: " + sum);
+    assert.ok(sum.includes("李文正馆") && sum.includes("（无）"), "摘要应展示地点 旧值→清除: " + sum);
+    assert.ok(/uid onethu-edit/.test(sum), "摘要应含 uid 片段: " + sum);
+    console.log("✓ 改日程待确认：", sum);
+    const ecf = await run("chat", "确认");
+    assert.equal(ecf.result?.ok, true, `改日程确认执行应成功：${JSON.stringify(ecf.result)}`);
+    assert.equal(ecf.result.executed, true, "确认后应真实执行 cal.edit");
+    assert.ok(ecf.result.answer.includes("已执行"), "应报告执行成功");
+    assert.ok(ecf.result.answer.includes("云日历"), "结果应报告存储位置（云日历）");
+    console.log("✓ 改日程确认执行：", ecf.result.answer.split("\n")[0]);
+  }
 
   // R9 关键回归：慢 chat 占用期间，控制命令必须照常秒回（主循环永不阻塞）
   {

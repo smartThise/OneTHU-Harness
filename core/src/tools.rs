@@ -108,6 +108,22 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: true,
         },
         ToolDef {
+            name: "edit_schedule",
+            desc: "修改已有日程（uid 来自 query_agenda；只传要改的字段，未传的保留原值）。例如：把明天 14:00 的班会改到 16:00-17:30",
+            params: p(json!({
+                "uid": {"type": "string", "description": "query_agenda 返回的 uid"},
+                "title": {"type": "string", "description": "新标题（不改不传）"},
+                "date": {"type": "string", "description": "新日期：明天 / 2025-09-08（不改不传）"},
+                "start": {"type": "string", "description": "新开始 HH:MM（不改不传；改全天则不传）"},
+                "end": {"type": "string", "description": "新结束 HH:MM（不改不传）"},
+                "location": {"type": "string", "description": "新地点（不改不传；传空串=清除地点）"},
+                "note": {"type": "string", "description": "新备注（不改不传；传空串=清除备注）"},
+                "allDay": {"type": "boolean", "description": "改为全天日程（可选）"},
+                "toCloud": {"type": "boolean", "description": "迁移存储（可选）：true=转入云日历（多设备可见），false=转为仅本机"}
+            }), &["uid"]),
+            confirm: true,
+        },
+        ToolDef {
             name: "query_exams",
             desc: "查考试安排（课程/日期/时间/地点）",
             params: p(json!({}), &[]),
@@ -612,6 +628,74 @@ fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, Stri
             Ok(format!("新建日程「{}」：{}{}", s(args, "title"), when, if loc.is_empty() { String::new() } else { format!(" @{}", loc) }))
         }
         "remove_schedule" => Ok(format!("删除日程（uid={}）", s(args, "uid"))),
+        "edit_schedule" => {
+            let uid = s(args, "uid");
+            // 拉近期日程找旧值（±400 天窗口），找不到就只展示新值（执行时会给出权威报错）
+            let from = (today() - Duration::days(400)).format("%Y-%m-%d").to_string();
+            let to = (today() + Duration::days(400)).format("%Y-%m-%d").to_string();
+            let rec = host(ctx, "cal", "agenda", json!([from, to]))
+                .ok()
+                .map(|v| arr_of(&v))
+                .and_then(|arr| arr.into_iter().find(|r| s(r, "uid") == uid));
+            let (od, ost, oen, old_all_day) = rec
+                .as_ref()
+                .map(|r| (s(r, "date"), s(r, "start"), s(r, "end"), r.get("allDay").and_then(|v| v.as_bool()).unwrap_or(false)))
+                .unwrap_or_default();
+            // 新 when：新字段在旧值基础上合并（与 facade cal.edit 同语义）
+            let date = {
+                let raw = s(args, "date");
+                if raw.is_empty() {
+                    od.clone()
+                } else {
+                    resolve_date(&raw).ok_or("无法理解 date 日期")?.format("%Y-%m-%d").to_string()
+                }
+            };
+            let all_day = args.get("allDay").and_then(|v| v.as_bool()).unwrap_or(old_all_day);
+            let when = if all_day {
+                format!("{}（全天）", date)
+            } else {
+                let st = or_default(&s(args, "start"), &ost);
+                let en = or_default(&s(args, "end"), &oen);
+                format!("{} {}-{}", date, st, en)
+            };
+            let old_when = if rec.is_none() || (od.is_empty() && ost.is_empty()) {
+                String::new()
+            } else if old_all_day {
+                format!("{}（全天）", od)
+            } else {
+                format!("{} {}-{}", od, ost, oen)
+            };
+            let old_title = rec.as_ref().map(|r| s(r, "title")).unwrap_or_default();
+            let mut extra = String::new();
+            if let Some(t) = args.get("title").and_then(|v| v.as_str()) {
+                if !t.trim().is_empty() {
+                    extra.push_str(&format!("；标题「{}」→「{}」", old_title, t));
+                }
+            }
+            for (k, label) in [("location", "地点"), ("note", "备注")] {
+                if let Some(v) = args.get(k).and_then(|x| x.as_str()) {
+                    let old = rec.as_ref().map(|r| s(r, k)).unwrap_or_default();
+                    let shown = |x: &str| if x.is_empty() { "（无）".to_string() } else { x.to_string() };
+                    extra.push_str(&format!("；{} {}→{}", label, shown(&old), shown(v)));
+                }
+            }
+            if let Some(b) = args.get("toCloud").and_then(|v| v.as_bool()) {
+                let from_side = rec.as_ref().map(|r| s(r, "source")).unwrap_or_default();
+                let arrow = if b { "本机→云日历（多设备可见）" } else { "云日历→本机（仅本机）" }.to_string();
+                if from_side.is_empty() {
+                    extra.push_str(&format!("；{}", arrow));
+                } else {
+                    extra.push_str(&format!("；存储 {}", arrow));
+                }
+            }
+            let head = if old_title.is_empty() { s(args, "title") } else { old_title.clone() };
+            let arrow = if old_when.is_empty() || old_when == when {
+                when.clone()
+            } else {
+                format!("{} → {}", old_when, when)
+            };
+            Ok(format!("修改日程「{}」（uid {}）：{}{}", head, uid.chars().take(12).collect::<String>(), arrow, extra))
+        }
         _ => Err(format!("未知确认工具：{name}")),
     }
 }
@@ -715,6 +799,49 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
                 return Err("缺少 uid（先用 query_agenda 拿日程的 uid 字段）".to_string());
             }
             host(ctx, "cal", "remove", json!([uid]))?
+        }
+        "edit_schedule" => {
+            let uid = s(args, "uid");
+            if uid.is_empty() {
+                return Err("缺少 uid（先用 query_agenda 拿日程的 uid 字段）".to_string());
+            }
+            let mut ch = json!({});
+            if let Some(t) = args.get("title").and_then(|v| v.as_str()) {
+                if !t.trim().is_empty() {
+                    ch["title"] = json!(t);
+                }
+            }
+            let d = s(args, "date");
+            if !d.is_empty() {
+                let resolved = resolve_date(&d).ok_or("无法理解 date 日期")?;
+                ch["date"] = json!(resolved.format("%Y-%m-%d").to_string());
+            }
+            // 时间：必须可解析（防「改时间」参数写错被静默保留原时间）
+            for k in ["start", "end"] {
+                let v = s(args, k);
+                if !v.is_empty() {
+                    let (h, m) = crate::config::resolve_hhmm(&v).ok_or(format!("无法理解 {k} 时间（应为 HH:MM，如 16:00）"))?;
+                    ch[k] = json!(format!("{:02}:{:02}", h, m));
+                }
+            }
+            // location/note：显式传空串=清除，未传=保留（facade 按键是否存在区分）
+            for k in ["location", "note"] {
+                if let Some(v) = args.get(k).and_then(|x| x.as_str()) {
+                    ch[k] = json!(v);
+                }
+            }
+            for k in ["allDay", "toCloud"] {
+                if let Some(v) = args.get(k).and_then(|x| x.as_bool()) {
+                    ch[k] = json!(v);
+                }
+            }
+            let r = host(ctx, "cal", "edit", json!([uid, ch]))?;
+            json!({
+                "success": true,
+                "uid": s(&r, "uid"),
+                "where": if s(&r, "where") == "local" { "本机（不云同步）" } else { "云日历（多设备可见）" },
+                "note": "修改已保存；系统日历镜像（若开启）会自动跟进"
+            })
         }
         "query_exams" => host(ctx, "info", "exams", json!([]))?,
         "query_deadlines" => host(ctx, "info", "deadlines", json!([]))?,
