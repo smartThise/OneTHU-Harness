@@ -30,12 +30,46 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
     const lastUserMsg = [...reqJson.messages].reverse().find((m) => m.role === "user");
+    const mailQ = lastUserMsg && /最新邮件|我的邮件/.test(lastUserMsg.content);
+    const mailRead = lastUserMsg && /打开第一封/.test(lastUserMsg.content);
     const booking = lastUserMsg && lastUserMsg.content.includes("订");
     if (lastUserMsg && lastUserMsg.content.includes("慢速测试")) {
       // R9 回归触发器：模拟网关慢峰——chat 占住主循环 2s
       await sleep(2000);
     }
-    if (booking) {
+    if (mailRead) {
+      // 读信场景：read_mail（uid 来自上一轮 query_mails 的列表）
+      if (!(lastToolMsg && lastToolMsg.content.includes("CI 挂了"))) {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_r1", type: "function", function: { name: "read_mail", arguments: '{"uid":1755410750}' } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 280, completion_tokens: 16 } });
+      } else {
+        assert.ok(lastToolMsg.content.includes("CI 挂了"), "读信工具结果应含正文");
+        send({ choices: [{ delta: { content: "这封 GitHub 通知说：CI 挂了，快修。" } }] });
+        send({ choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 320, completion_tokens: 18 } });
+      }
+    } else if (mailQ) {
+      // 邮件场景：query_mails → 用列表里的主题作答
+      if (!lastToolMsg) {
+        send({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_m1", type: "function", function: { name: "query_mails", arguments: "{}" } }],
+            },
+          }],
+        });
+        send({ choices: [{ finish_reason: "tool_calls" }], usage: { prompt_tokens: 220, completion_tokens: 18 } });
+      } else {
+        assert.ok(lastToolMsg.content.includes("GitHub 通知"), "工具结果应含模拟邮件主题");
+        send({ choices: [{ delta: { content: "最新一封是 GitHub 通知（未读），还有课程组邮件。" } }] });
+        send({ choices: [{ finish_reason: "stop" }], usage: { prompt_tokens: 300, completion_tokens: 20 } });
+      }
+    } else if (booking) {
       // 订座场景：要求调用 book_library_seat（纯索引参数；确认执行不再进 LLM）
       send({
         choices: [{
@@ -196,6 +230,32 @@ function facade(ns, method, args) {
         },
       ];
     }
+    case "mail.list": {
+      assert.equal(args[0], "INBOX", "默认应查收件箱");
+      assert.ok(args[1] >= 1 && args[1] <= 20, "limit 应夹在 1..20");
+      return {
+        total: 484,
+        mails: [
+          { uid: 1755410750, subject: "[smartThise] GitHub 通知", from: "notifications@github.com", dateMs: 1788966113000, seen: false },
+          { uid: 1755410749, subject: "课程组：下周实验安排", from: "teacher@mails.tsinghua.edu.cn", dateMs: 1788950000000, seen: true },
+        ],
+      };
+    }
+    case "mail.read": {
+      assert.equal(args[0], "INBOX");
+      assert.equal(args[1], 1755410750);
+      return { subject: "[smartThise] GitHub 通知", from: "notifications@github.com", to: "me@mails.tsinghua.edu.cn", dateMs: 1788966113000, text: "CI 挂了，快修。", html: null };
+    }
+    case "mail.search": {
+      assert.equal(args[0], "INBOX");
+      assert.equal(args[1], "GitHub", "搜索词应透传");
+      return [{ uid: 1755410750, subject: "[smartThise] GitHub 通知", from: "notifications@github.com", dateMs: 1788966113000, seen: false }];
+    }
+    case "mail.send": {
+      assert.equal(args[0], "teacher@mails.tsinghua.edu.cn");
+      assert.equal(args[2], "作业缓交申请");
+      return null;
+    }
     default: throw new Error(`模拟器未实现：${ns}.${method}`);
   }
 }
@@ -333,6 +393,27 @@ async function main() {
     assert.equal(hw.result?.ok, true, `查作业应成功：${JSON.stringify(hw.result)}`);
     assert.ok(hw.result.answer.includes("2026-09-20"), "回答应引用映射后的截止时间: " + hw.result.answer);
     console.log("✓ 作业 due 映射：", hw.result.answer);
+  }
+
+  // 6.8) 邮件三件套：列表 → 读信（+确认型发信的摘要）
+  {
+    await request("run", { command: "new_session" });
+    const mq = await run("chat", "看看我的最新邮件");
+    assert.equal(mq.result?.ok, true, `查邮件应成功：${JSON.stringify(mq.result)}`);
+    assert.ok(mq.result.answer.includes("GitHub 通知"), "回答应引用邮件主题");
+    assert.ok(mq.result.answer.includes("未读"), "应标注未读状态");
+    assert.ok(mq.result.usage.calls === 2, "应为两轮 LLM 调用");
+    const mailListCall = hostCalls.find((c) => c.ns === "mail" && c.method === "list");
+    assert.ok(mailListCall, "门面应收到 mail.list");
+    console.log("✓ 查最新邮件：", mq.result.answer);
+
+    // 读信（同一会话第二轮）
+    const rd = await run("chat", "打开第一封");
+    assert.equal(rd.result?.ok, true);
+    assert.ok(rd.result.answer.includes("CI 挂了"), "读信应返回正文");
+    const mailReadCall = hostCalls.find((c) => c.ns === "mail" && c.method === "read");
+    assert.ok(mailReadCall, "门面应收到 mail.read");
+    console.log("✓ 读信正文：", rd.result.answer);
   }
 
   // R9 关键回归：慢 chat 占用期间，控制命令必须照常秒回（主循环永不阻塞）

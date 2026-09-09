@@ -75,6 +75,10 @@ fn system_prompt(cfg: &Config) -> String {
          网络学堂/选课目录不是查教室的路径。\
          个人日程（班会/活动/自习等，含云日历）用 query_agenda；新建/删除\
          日程用 add_schedule/remove_schedule（写操作需用户确认）。\
+         清华邮箱（用户的 @mails.tsinghua.edu.cn，凭云同步授权码直连）：查最新\
+         邮件用 query_mails、看正文用 read_mail（uid 来自列表）、找旧邮件用\
+         search_mails、代发邮件用 send_mail（写操作需用户确认）。用户说「我的\
+         邮件」「最新邮件」时就是走这套，不是网络学堂通知。\
          8. 回答新闻类问题时每条用 markdown 链接给 link 字段（[标题](link)，\
          onethu-news:// 应用内直达新闻详情页），不要给外部原文 URL。\n\
          \n\

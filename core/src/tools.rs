@@ -124,6 +124,44 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: true,
         },
         ToolDef {
+            name: "query_mails",
+            desc: "查我的清华邮箱最新邮件（收件箱或已发送）。返回 uid/主题/发件人/时间/未读；要看正文用 read_mail。用户问「我的邮件」「最新邮件」「有没有新邮件」时用这个",
+            params: p(json!({
+                "folder": {"type": "string", "description": "收件箱(inbox，默认) / 已发送(sent)"},
+                "limit": {"type": "integer", "description": "最多返回几封（默认 5，最大 20）"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "read_mail",
+            desc: "读一封邮件的正文（uid 来自 query_mails / search_mails；读后自动标为已读）",
+            params: p(json!({
+                "uid": {"type": "integer", "description": "邮件 uid"},
+                "folder": {"type": "string", "description": "默认收件箱"}
+            }), &["uid"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "search_mails",
+            desc: "全箱搜索邮件（服务器端按主题/发件人匹配，覆盖全部历史邮件，不只是最新一页）",
+            params: p(json!({
+                "query": {"type": "string", "description": "关键词"},
+                "folder": {"type": "string", "description": "默认收件箱"}
+            }), &["query"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "send_mail",
+            desc: "从我的清华邮箱发邮件（多个收件人用逗号分隔）",
+            params: p(json!({
+                "to": {"type": "string", "description": "收件人邮箱"},
+                "subject": {"type": "string", "description": "主题"},
+                "body": {"type": "string", "description": "正文（纯文本）"},
+                "cc": {"type": "string", "description": "抄送（可选）"}
+            }), &["to", "subject", "body"]),
+            confirm: true,
+        },
+        ToolDef {
             name: "query_exams",
             desc: "查考试安排（课程/日期/时间/地点）",
             params: p(json!({}), &[]),
@@ -519,6 +557,19 @@ pub fn is_confirm(name: &str) -> bool {
 /// 两段式确认的确认摘要（把对象解析好再给用户看）
 fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, String> {
     match name {
+        "send_mail" => {
+            let to = s(args, "to");
+            let subject = s(args, "subject");
+            let body = s(args, "body");
+            let cc = s(args, "cc");
+            Ok(format!(
+                "发邮件给 {}{}：{}（正文 {} 字）",
+                to,
+                if cc.is_empty() { String::new() } else { format!("（抄送 {}）", cc) },
+                if subject.is_empty() { "(无主题)" } else { &subject },
+                body.chars().count()
+            ))
+        }
         "book_library_seat" => {
             let (seat, sec, floor, lib) = resolve_seat(ctx, args)?;
             let date = {
@@ -744,6 +795,87 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
         return Ok(ToolOut::ConfirmNeeded { tool: name.into(), args: args.clone(), summary });
     }
     let out: Value = match name {
+        "query_mails" => {
+            let folder = match s(args, "folder").to_lowercase().as_str() {
+                "sent" | "已发送" => "Sent Items",
+                _ => "INBOX",
+            };
+            let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 20) as usize;
+            let r = host(ctx, "mail", "list", json!([folder, limit]))?;
+            let mails = r.get("mails").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+            let total = n(&r, "total");
+            let lines: Vec<String> = mails
+                .iter()
+                .map(|m| {
+                    format!(
+                        "uid={}{} {} | {} | {}",
+                        m.get("uid").and_then(|v| v.as_i64()).unwrap_or(0),
+                        if m.get("seen").and_then(|v| v.as_bool()).unwrap_or(true) { "" } else { " [未读]" },
+                        fmt_mail_ms(m.get("dateMs").and_then(|v| v.as_i64()).unwrap_or(0)),
+                        m.get("from").and_then(|v| v.as_str()).unwrap_or(""),
+                        m.get("subject").and_then(|v| v.as_str()).unwrap_or(""),
+                    )
+                })
+                .collect();
+            json!({
+                "folder": if folder == "INBOX" { "收件箱" } else { "已发送" },
+                "total": total,
+                "count": lines.len(),
+                "mails": lines,
+                "hint": "read_mail 可看某封正文；total 大于 count 时说明还有更早的邮件"
+            })
+        }
+        "read_mail" => {
+            let folder = match s(args, "folder").to_lowercase().as_str() {
+                "sent" | "已发送" => "Sent Items",
+                _ => "INBOX",
+            };
+            let uid = n(args, "uid");
+            let r = host(ctx, "mail", "read", json!([folder, uid]))?;
+            let text = s(&r, "text");
+            let truncated = text.chars().count() > 6000;
+            let shown: String = text.chars().take(6000).collect();
+            json!({
+                "subject": s(&r, "subject"),
+                "from": s(&r, "from"),
+                "to": s(&r, "to"),
+                "date": fmt_mail_ms(r.get("dateMs").and_then(|v| v.as_i64()).unwrap_or(0)),
+                "body": shown,
+                "truncated": truncated,
+                "hint": if truncated { "正文过长已截断（原文更长）" } else { "" }
+            })
+        }
+        "search_mails" => {
+            let folder = match s(args, "folder").to_lowercase().as_str() {
+                "sent" | "已发送" => "Sent Items",
+                _ => "INBOX",
+            };
+            let query = s(args, "query");
+            let r = host(ctx, "mail", "search", json!([folder, query]))?;
+            let mails = arr_of(&r);
+            let lines: Vec<String> = mails
+                .iter()
+                .map(|m| {
+                    format!(
+                        "uid={}{} {} | {} | {}",
+                        m.get("uid").and_then(|v| v.as_i64()).unwrap_or(0),
+                        if m.get("seen").and_then(|v| v.as_bool()).unwrap_or(true) { "" } else { " [未读]" },
+                        fmt_mail_ms(m.get("dateMs").and_then(|v| v.as_i64()).unwrap_or(0)),
+                        m.get("from").and_then(|v| v.as_str()).unwrap_or(""),
+                        m.get("subject").and_then(|v| v.as_str()).unwrap_or(""),
+                    )
+                })
+                .collect();
+            json!({ "query": query, "count": lines.len(), "mails": lines })
+        }
+        "send_mail" => {
+            let to = s(args, "to");
+            let cc = s(args, "cc");
+            let subject = s(args, "subject");
+            let body = s(args, "body");
+            host(ctx, "mail", "send", json!([to, cc, subject, body]))?;
+            json!({ "success": true, "to": to, "subject": subject })
+        }
         "query_profile" => {
             let status: Value = host(ctx, "session", "status", json!([]))?;
             let username: Value = host(ctx, "session", "username", json!([]))?;
@@ -1624,4 +1756,13 @@ fn or_default(v: &str, d: &str) -> String {
 
 fn pretty(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
+}
+
+/** epoch ms → 北京时间 "2026-09-09 23:11"（邮件工具输出用） */
+fn fmt_mail_ms(ms: i64) -> String {
+    use chrono::TimeZone;
+    chrono::FixedOffset::east_opt(8 * 3600)
+        .and_then(|tz| chrono::DateTime::from_timestamp(ms.div_euclid(1000), 0).map(|d| d.with_timezone(&tz)))
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "?".into())
 }
