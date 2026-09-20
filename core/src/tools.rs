@@ -62,6 +62,20 @@ pub fn all_tools() -> Vec<ToolDef> {
     };
     vec![
         ToolDef {
+            name: "thubook_toc",
+            desc: "列 THUbook（清华手册，thubook.help）的全部页面路径。先看目录再决定读哪页",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "thubook_read",
+            desc: "读 THUbook 某页正文（纯文本）。path 来自 thubook_toc，如 /thubook/专题/chuguo.html；缺省为手册首页",
+            params: p(json!({
+                "path": {"type": "string", "description": "页面路径，以 / 开头；缺省 /thubook/"}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
             name: "query_profile",
             desc: "查当前登录用户的基本信息（姓名/学号/院系/邮箱）与会话状态",
             params: p(json!({}), &[]),
@@ -568,15 +582,64 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "open_page",
+            desc: "按名字在应用内直接打开一个页面或事物——用户说「打开亲友来访」「帮我开研讨间预约」「打开数据结构这门课」时用它，比 navigate 更省事：只需给名字，本工具自己检索并跳转（在线服务、课程、作业、通知、文件、场馆、教学楼、洗衣机楼、图书馆、新闻、今日组件、功能页面等）。命中多个时返回 candidates，向用户确认后再带 kind 调用一次。只能命中本机已缓存过的东西（某个服务/课程此前在应用里打开过一次即入缓存）；找不到时提示用户先在对应页面看一眼，别改口说做不到",
+            params: p(json!({
+                "query": {"type": "string", "description": "页面或事物的名字，如「亲友来访」「缓考」「数据结构」「研讨间预约」"},
+                "kind": {"type": "string", "description": "可选：限定原子种类（如 thos-service / course / sports-v / library），不确定就不要传"}
+            }), &["query"]),
+            confirm: false,
+        },
+        ToolDef {
             name: "notify",
             desc: "在应用底部弹一条 toast 提示",
             params: p(json!({ "text": {"type": "string"} }), &["text"]),
             confirm: false,
         },
+        ToolDef {
+        name: "list_plugin_cmds",
+        desc: "列出当前已启用插件的命令清单（联动插件）。需要执行插件能力时，先调用本工具查看可用命令，再用 run_plugin_cmd 执行。",
+        params: json!({ "type": "object", "properties": {} }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "run_plugin_cmd",
+        desc: "执行某个已启用插件的命令（联动插件）。pluginId/cmdId 从 list_plugin_cmds 结果获取；input 为该命令的文本参数（命令标注「无输入」时传空串）。注意：命令可能包含写操作，执行前应向用户说明将要做什么。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "pluginId": { "type": "string", "description": "插件 id，如 onethu.dept-notices" },
+                "cmdId": { "type": "string", "description": "命令 id" },
+                "input": { "type": "string", "description": "命令文本参数；命令无输入时传空串" }
+            },
+            "required": ["pluginId", "cmdId"]
+        }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "list_favorite_kinds",
+        desc: "列出可收藏的原子种类（收藏夹体系）。需要收藏信息时先调用本工具查看可用的 kind。",
+        params: json!({ "type": "object", "properties": {} }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "add_favorite",
+        desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "description": "收藏卡片标题（如「图书馆 3F-12 座位」）" },
+                "key": { "type": "string", "description": "稳定引用标识（如 fav:1730000000000）" },
+                "note": { "type": "string", "description": "补充说明（可选）" }
+            },
+            "required": ["title", "key"]
+        }),
+        confirm: false,
+    },
     ]
 }
 
-/// OpenAI tools 参数
+/// OpenAI tools 参数（静态校园工具集）
 pub fn schema() -> Vec<Value> {
     all_tools()
         .into_iter()
@@ -587,6 +650,29 @@ pub fn schema() -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// OpenAI tools 参数：校园工具集 + MCP 动态工具（设置 mcpServers 配置的 server 逐个列出）
+pub fn schema_with(mcp_servers: &[crate::mcp::McpServerDef]) -> Vec<Value> {
+    let mut out = schema();
+    if mcp_servers.is_empty() {
+        return out;
+    }
+    for def in mcp_servers {
+        if let Ok(tools) = crate::mcp::list_tools(def) {
+            for t in tools {
+                out.push(json!({
+                    "type": "function",
+                    "function": {
+                        "name": crate::mcp::tool_full_name(&t.server, &t.name),
+                        "description": format!("（MCP·{}）{}", t.server, t.desc),
+                        "parameters": t.params
+                    }
+                }));
+            }
+        }
+    }
+    out
 }
 
 pub fn is_confirm(name: &str) -> bool {
@@ -844,7 +930,95 @@ fn resolve_room(ctx: &mut Ctx, args: &Value) -> Result<(Value, String), String> 
 }
 
 /// 执行工具。confirmed=true 表示用户已确认（仅确认型工具使用）。
-pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Result<ToolOut, String> {
+pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_servers: &[crate::mcp::McpServerDef]) -> Result<ToolOut, String> {
+    // MCP 动态工具（B2）：name 形如 mcp_<server>_<tool>
+    if let Some(full) = name.strip_prefix("mcp_") {
+        for def in mcp_servers {
+            let prefix = crate::mcp::tool_full_name(&def.name, "");
+            if let Some(tool) = full.strip_prefix(&prefix) {
+                let text = crate::mcp::call_tool(def, tool, args)?;
+                return Ok(ToolOut::Text(if text.is_empty() { "（MCP 工具执行完成，无输出）".into() } else { text }));
+            }
+        }
+        return Ok(ToolOut::Text(format!("未找到 MCP server：{name}（检查设置 mcpServers）")));
+    }
+    // 联动插件（B1）：插件命令工具化——模型经宿主门禁调用已启用插件
+    if name == "list_plugin_cmds" {
+        let v = host(ctx, "plugins", "list", json!([]))?;
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(arr) = v.as_array() {
+            for p in arr {
+                let pid = p.get("pluginId").and_then(|x| x.as_str()).unwrap_or("");
+                if let Some(cmds) = p.get("commands").and_then(|x| x.as_array()) {
+                    for c in cmds {
+                        let cid = c.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                        let title = c.get("title").and_then(|x| x.as_str()).unwrap_or("");
+                        let il = c.get("inputLabel").and_then(|x| x.as_str()).unwrap_or("");
+                        let io = if il.is_empty() { "（无输入）".to_string() } else { format!("（输入：{il}）") };
+                        lines.push(format!("- pluginId={pid} cmdId={cid} 「{title}」{io}"));
+                    }
+                }
+            }
+        }
+        let text = if lines.is_empty() {
+            "当前没有已启用插件提供命令。".to_string()
+        } else {
+            format!("可用插件命令：\n{}", lines.join("\n"))
+        };
+        return Ok(ToolOut::Text(text));
+    }
+    if name == "run_plugin_cmd" {
+        let pid = s(args, "pluginId");
+        let cid = s(args, "cmdId");
+        let input = s(args, "input");
+        if pid.is_empty() || cid.is_empty() {
+            return Ok(ToolOut::Text("缺少 pluginId 或 cmdId：先用 list_plugin_cmds 查可用命令。".into()));
+        }
+        let v = host(ctx, "plugins", "call", json!([pid, cid, input]))?;
+        let text = match v {
+            Value::String(t) => t,
+            other => serde_json::to_string_pretty(&other).unwrap_or_else(|_| "（无输出）".into()),
+        };
+        return Ok(ToolOut::Text(if text.is_empty() { "（命令执行完成，无输出）".into() } else { text }));
+    }
+    if name == "list_favorite_kinds" {
+        let v = host(ctx, "favorites", "kinds", json!([]))?;
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(arr) = v.as_array() {
+            for k in arr {
+                let kind = k.get("kind").and_then(|x| x.as_str()).unwrap_or("");
+                let group = k.get("group").and_then(|x| x.as_str()).unwrap_or("");
+                if !kind.is_empty() {
+                    lines.push(format!("- kind={kind} （{group}）"));
+                }
+            }
+        }
+        let text = if lines.is_empty() {
+            "当前没有可收藏的原子种类。".to_string()
+        } else {
+            format!("可收藏的原子种类：\n{}", lines.join("\n"))
+        };
+        return Ok(ToolOut::Text(text));
+    }
+    if name == "add_favorite" {
+        let title = s(args, "title");
+        let key = s(args, "key");
+        let note = s(args, "note");
+        if title.is_empty() || key.is_empty() {
+            return Ok(ToolOut::Text("缺少 title 或 key。".into()));
+        }
+        let k = if key.starts_with("fav:") { key.clone() } else { format!("fav:{}", key) };
+        let refv = json!({ "kind": "plugin:onethu.harness", "key": k });
+        let meta = if note.is_empty() {
+            json!({ "title": title, "group": "对话收藏" })
+        } else {
+            json!({ "title": title, "sub": note, "group": "对话收藏" })
+        };
+        let v = host(ctx, "favorites", "addAtom", json!([refv, meta]))?;
+        let ok = v.is_null() || v.as_bool() == Some(true) || !v.is_object();
+        let _ = ok;
+        return Ok(ToolOut::Text(format!("已收藏「{title}」，可在收藏夹页查看。")));
+    }
     if is_confirm(name) && !confirmed {
         let summary = build_summary(name, args, ctx)?;
         return Ok(ToolOut::ConfirmNeeded { tool: name.into(), args: args.clone(), summary });
@@ -1016,6 +1190,37 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let body = s(args, "body");
             host(ctx, "mail", "send", json!([to, cc, subject, body]))?;
             json!({ "success": true, "to": to, "subject": subject })
+        }
+        "thubook_toc" => {
+            let body = thubook_fetch("https://thubook.help/sitemap.xml")?;
+            let mut paths: Vec<String> = Vec::new();
+            let mut rest = body.as_str();
+            while let Some(a) = rest.find("<loc>") {
+                let b = match rest[a + 5..].find("</loc>") {
+                    Some(n) => a + 5 + n,
+                    None => break,
+                };
+                let loc = rest[a + 5..b].trim().to_string();
+                if !loc.is_empty() {
+                    paths.push(loc);
+                }
+                rest = &rest[b + 6..];
+            }
+            let total = paths.len();
+            paths.truncate(400);
+            json!({ "count": total, "note": "全部页面 loc；thubook_read 的 path 用域名后部分", "paths": paths })
+        }
+        "thubook_read" => {
+            let raw = s(args, "path");
+            let path = if raw.is_empty() { "/thubook/".to_string() } else { raw.to_string() };
+            if !path.starts_with('/') || path.contains("..") {
+                return Err(format!("非法 path：{path}（须以 / 开头且不含 ..，域内仅 thubook.help）"));
+            }
+            let body = thubook_fetch(&format!("https://thubook.help{path}"))?;
+            let (title, text) = thubook_extract(&body);
+            let truncated = text.chars().count() > 9000;
+            let text: String = text.chars().take(9000).collect();
+            json!({ "path": path, "title": title, "chars": text.chars().count(), "truncated": truncated, "text": text })
         }
         "query_profile" => {
             let status: Value = host(ctx, "session", "status", json!([]))?;
@@ -1878,6 +2083,54 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool) -> Resu
             let ok = host(ctx, "nav", "go", json!([s(args, "page"), params]))?;
             json!({ "navigated": ok })
         }
+        "open_page" => {
+            let q = s(args, "query");
+            let q = q.trim().to_string();
+            if q.is_empty() {
+                return Err("query 不能为空".into());
+            }
+            let want_kind = s(args, "kind").trim().to_string();
+            let hits = arr_of(&host(ctx, "nav", "searchAtoms", json!([q, 12]))?);
+            let candidates: Vec<Value> = hits
+                .into_iter()
+                .filter(|h| want_kind.is_empty() || s(h, "kind") == want_kind)
+                .collect();
+            // 选最像的那个：同名 > 以名字开头 > 包含名字 > 第一条
+            let pick = candidates
+                .iter()
+                .find(|h| s(h, "title") == q)
+                .or_else(|| candidates.iter().find(|h| s(h, "title").starts_with(&q)))
+                .or_else(|| candidates.iter().find(|h| s(h, "title").contains(&q)))
+                .or_else(|| candidates.first())
+                .cloned();
+            let picked = match pick {
+                Some(p) => p,
+                None => {
+                    return Ok(ToolOut::Text(pretty(&json!({
+                        "opened": false,
+                        "reason": format!("本机没有检索到「{q}」。它可能还没在本机出现过——让用户先在对应页面打开一次，之后就能一句话直达"),
+                        "candidates": []
+                    }))));
+                }
+            };
+            let refs = json!([{ "kind": s(&picked, "kind"), "key": s(&picked, "key") }]);
+            let opened = host(ctx, "nav", "openAtom", refs)?;
+            let opened = opened.as_bool().unwrap_or(false);
+            let others: Vec<Value> = candidates
+                .iter()
+                .filter(|h| s(h, "key") != s(&picked, "key"))
+                .take(5)
+                .map(|h| json!({ "kind": s(h, "kind"), "title": s(h, "title"), "sub": s(h, "sub"), "group": s(h, "group") }))
+                .collect();
+            json!({
+                "opened": opened,
+                "title": s(&picked, "title"),
+                "kind": s(&picked, "kind"),
+                "group": s(&picked, "group"),
+                "candidates": others,
+                "note": if opened { "已在应用内打开" } else { "该条目已失效（对应的收藏或数据可能已被删除）" }
+            })
+        }
         "notify" => {
             host(ctx, "ui", "toast", json!([s(args, "text")]))?;
             json!({ "sent": true })
@@ -1942,4 +2195,98 @@ fn fmt_size(b: i64) -> String {
     } else {
         format!("{:.1} {}", v, UNITS[i])
     }
+}
+
+
+/* ══════════ THUbook（thubook.help）抓取与正文提取 ══════════ */
+
+fn thubook_fetch(url: &str) -> Result<String, String> {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(25))
+        .build()
+        .get(url)
+        .set("User-Agent", "OneTHU-Harness/0.1 (THUbook reader)")
+        .call()
+        .map_err(|e| format!("THUbook 请求失败：{e}"))?
+        .into_string()
+        .map_err(|e| format!("THUbook 读取失败：{e}"))
+}
+
+/// 预渲染 VuePress 页面 → (标题, 纯文本正文)：main 优先，去 script/style/tag，
+/// 解常见实体，压缩空白。不含首尾导航杂质。
+fn thubook_extract(html: &str) -> (String, String) {
+    let title = html
+        .find("<title>")
+        .and_then(|a| html[a + 7..].find("</title>").map(|n| html[a + 7..a + 7 + n].to_string()))
+        .unwrap_or_default();
+    let seg = match (html.find("<main"), html.find("</main>")) {
+        (Some(a), Some(b)) if b > a => &html[a..b],
+        _ => match (html.find("<body"), html.find("</body>")) {
+            (Some(a), Some(b)) if b > a => &html[a..b],
+            _ => html,
+        },
+    };
+    // 迭代剔除整块标签（script/style/nav/header/footer）
+    fn strip_blocks(mut src: &str, tag: &str) -> String {
+        let open = format!("<{tag}");
+        let close = format!("</{tag}>");
+        let mut out = String::with_capacity(src.len());
+        loop {
+            match src.find(&open) {
+                Some(a) => match src[a..].find(&close) {
+                    Some(n) => {
+                        out.push_str(&src[..a]);
+                        src = &src[a + n + close.len()..];
+                    }
+                    None => {
+                        out.push_str(src);
+                        break;
+                    }
+                },
+                None => {
+                    out.push_str(src);
+                    break;
+                }
+            }
+        }
+        out
+    }
+    let mut owned = seg.to_string();
+    for tag in ["script", "style", "nav", "header", "footer"] {
+        owned = strip_blocks(&owned, tag);
+    }
+    let rest = owned.as_str();
+    // 去 tag
+    let mut out = String::with_capacity(rest.len());
+    let mut in_tag = false;
+    for c in rest.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let t = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+    let mut text = String::with_capacity(t.len());
+    let mut prev_space = false;
+    for c in t.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                text.push(' ');
+            }
+            prev_space = true;
+        } else {
+            text.push(c);
+            prev_space = false;
+        }
+    }
+    (title, text.trim().to_string())
 }

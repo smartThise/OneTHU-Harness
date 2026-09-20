@@ -6,6 +6,8 @@ pub mod agent;
 pub mod config;
 pub mod host;
 pub mod llm;
+pub mod madmodel;
+pub mod mcp;
 pub mod session;
 pub mod tools;
 pub mod usage;

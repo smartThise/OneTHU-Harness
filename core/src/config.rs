@@ -10,6 +10,12 @@ use serde_json::{json, Value};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub api_key: String,
+    /// MadModel 免费档当前是否可用（校内可达且未回退自费）；false 时 chat_turn 预检提醒
+    pub madmodel_ok: bool,
+    /// 本次解析是否走「清华免费档」（provider 未显式 custom，且未回退自费）。
+    /// 用于把「免费档 token 未就绪」与「没填自费 API Key」两种报错分开——
+    /// 前者说「未配置 API Key」会把人误导到手填 key（用户实录 2026-09-20）。
+    pub uses_free_tier: bool,
     pub base_url: String,
     pub model: String,
     /// 思考模式：off=不开；on=DeepSeek 系自动切 reasoner 变体；其他端尽力而为
@@ -25,6 +31,8 @@ pub struct Config {
     pub budget_usd: f64,
     /// 单次任务最大 agent 步数
     pub max_steps: u32,
+    /// MCP server 定义（设置 mcpServers JSON 解析产物；空 = 未启用）
+    pub mcp_servers: Vec<crate::mcp::McpServerDef>,
 }
 
 impl Config {
@@ -70,17 +78,51 @@ impl Config {
             if m.is_empty() { "deepseek-chat".into() } else { m }
         };
         let thinking = matches!(get("thinking").to_lowercase().as_str(), "on" | "true" | "1" | "开");
+        // MadModel 免费档（2026-09-19）：apiKey 未填且未显式 provider=custom 时，
+        // 走 JS 泵注入的 madmodelToken（清华校园网 DeepSeek，见 state/madmodel.ts）。
+        // token 缺失（校外首启泵还没跑通）→ api_key 留空，llm 层给出明确报错。
+        let mut uses_free_tier = false;
+        let (api_key, base, model, price_in, price_out) = {
+            // 显式选择优先：madmodel=免费档（即使 key 填着）；custom=自费；
+            // 未显式选择时看 apiKey——已填 key 的老用户维持自费（迁移安全）
+            let custom = match get("provider").as_str() {
+                "custom" => true,
+                "madmodel" => false,
+                _ => !get("apiKey").is_empty(),
+            };
+            if custom {
+                (get("apiKey"), base.clone(), model.clone(), get_num("priceIn", 0.27).max(0.0), get_num("priceOut", 1.10).max(0.0))
+            } else {
+                // 校外兜底三态（2026-09-19 定案）：泵探针把可达性写进 madmodelReachable。
+                // 校内 → 免费档；校外 + 已填自费 Key → 自动回退自费（用户无感）；
+                // 校外 + 无自费 → 维持免费档参数，chat_turn 预检给出提醒文案。
+                let outside = get("madmodelReachable") == "0";
+                let has_custom = !get("apiKey").is_empty();
+                if outside && has_custom {
+                    (get("apiKey"), base.clone(), model.clone(), get_num("priceIn", 0.27).max(0.0), get_num("priceOut", 1.10).max(0.0))
+                } else {
+                    uses_free_tier = true;
+                    let tok = get("madmodelToken");
+                    (tok, crate::madmodel::BASE.to_string(), crate::madmodel::MODEL.to_string(), 0.0, 0.0)
+                }
+            }
+        };
+        // 免费档可用性 = 非校外拦停场景（校外且无自费时 false → llm 预检出提醒）
+        let madmodel_ok = !(get("madmodelReachable") == "0" && get("apiKey").is_empty());
         Config {
-            api_key: get("apiKey"),
+            madmodel_ok,
+            uses_free_tier,
+            api_key,
             base_url: base,
             model,
             thinking,
             max_context: get_num("maxContext", 24000.0).max(4000.0) as usize,
             stream: !matches!(get("stream").to_lowercase().as_str(), "off" | "false" | "0" | "关"),
-            price_in: get_num("priceIn", 0.27).max(0.0),
-            price_out: get_num("priceOut", 1.10).max(0.0),
+            price_in,
+            price_out,
             budget_usd: get_num("budget", 2.0).max(0.0),
             max_steps: (get_num("maxSteps", 16.0).max(2.0).min(64.0)) as u32,
+            mcp_servers: crate::mcp::parse_servers(&get("mcpServers")),
         }
     }
 }

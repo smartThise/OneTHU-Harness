@@ -120,6 +120,21 @@ pub fn chat_turn(
     tools: &[Value],
     hooks: &mut Hooks,
 ) -> Result<Turn, LlmError> {
+    // MadModel 免费档预检（2026-09-19 兜底定案）：校外且无自费 Key → 不发请求，
+    // 直接给出引导；免费档 token 尚未就位（泵首签还没完成）→ 提示稍候。
+    if url_contains_madmodel(cfg) {
+        if !cfg.madmodel_ok {
+            return Err(LlmError {
+                message: "外网环境无法使用清华免费 DeepSeek（MadModel 仅限校内 IP）。\n                          · 连校园网或学校 VPN（EasyConnect）后自动恢复免费档；\n                          · 或在 插件页 → OneTHU Harness → 设置 里填入自费 API Key 并把模型源切到「自费 API」。"
+                    .into(),
+            });
+        }
+        if cfg.api_key.is_empty() {
+            return Err(LlmError {
+                message: "清华免费档 token 尚未就位（刚启动时泵首签需几秒），稍等片刻重试；                          或在设置里填自费 API Key 切到自费 API。".into(),
+            });
+        }
+    }
     let url = format!("{}/chat/completions", cfg.base_url);
     let mut body = json!({
         "model": cfg.model,
@@ -204,6 +219,15 @@ pub fn chat_turn(
         }
     };
 
+    // 307/HTML 壳（2026-09-19 实测）：MadModel 对校外 IP 全域弹 SSO（IP 门禁在
+    // token 校验之前），ureq 跟随后落到 HTML → JSON 解析报错难懂。给出人话。
+    let status = resp.status();
+    if (status >= 300 && status < 400) || (status == 200 && resp.content_type().to_string().contains("text/html")) {
+        return Err(LlmError {
+            message: "MadModel 拒绝了当前网络（IP 门禁 307，token 校验前就拦截）。该免费服务仅限校园网内 IP：                      请连校园网/学校 VPN（如 EasyConnect），或在插件设置把模型源切回自费 API。"
+                .into(),
+        });
+    }
     if cfg.stream {
         let ctype = resp.content_type().to_string();
         if ctype.contains("event-stream") {
@@ -215,6 +239,11 @@ pub fn chat_turn(
     }
     let v: Value = resp.into_json().map_err(|e| LlmError { message: format!("响应解析失败：{e}") })?;
     parse_completion(v)
+}
+
+/// 免费档判定：请求将打向 madmodel（含被回退前的默认 base）
+fn url_contains_madmodel(cfg: &crate::config::Config) -> bool {
+    cfg.base_url.contains("madmodel")
 }
 
 fn parse_completion(v: Value) -> Result<Turn, LlmError> {

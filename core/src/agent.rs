@@ -124,7 +124,15 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
     let map = settings.as_object().cloned().unwrap_or_default();
     let cfg = Config::from_settings(&map);
     if cfg.api_key.is_empty() {
-        return json!({ "type": "chat", "ok": false, "error": "尚未配置 API Key：请到 设置→插件→OneTHU Harness 展开卡片填写后重试。" });
+        // 免费档 token 未就绪 ≠ 没填自费 Key：前者说「去填 Key」会把人带偏（用户实录 2026-09-20）
+        let err = if cfg.uses_free_tier {
+            "清华免费档（MadModel）token 未就绪：校园网内会自动签发（本应用定时续期），请稍候重试；\
+             若不在校园网或走了代理 / VPN（MadModel 仅限校内 IP），请连校园网或学校 VPN（EasyConnect），\
+             或在 设置 → 插件 → OneTHU Harness 填入自费 API Key 并把模型源切到「自费 API」。"
+        } else {
+            "尚未配置 API Key：请到 设置→插件→OneTHU Harness 展开卡片填写后重试。"
+        };
+        return json!({ "type": "chat", "ok": false, "error": err });
     }
 
     let mut store = Store::load(h);
@@ -157,7 +165,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             progress(emit, "tool", &format!("执行已确认：{}", p.summary), None);
             let outcome = {
                 let mut ctx = Ctx { h };
-                tools::execute(&mut ctx, &p.tool, &p.args, true)
+                tools::execute(&mut ctx, &p.tool, &p.args, true, &cfg.mcp_servers)
             };
             let (ans, ok) = match outcome {
                 Ok(ToolOut::Text(t)) => (format!("✅ 已执行：{}\n{}", p.summary, humanize_tool_text(&t)), true),
@@ -208,7 +216,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
         tool_call_id: None,
         name: None,
     };
-    let tools_schema = tools::schema();
+    let tools_schema = tools::schema_with(&cfg.mcp_servers);
 
     let mut run_usage = Usage::default();
     let mut run_cost = 0.0f64;
@@ -331,7 +339,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
             (hooks.on_log)(&format!("→ 工具 {} · 步骤 {} · 参数 {}", tc.name, step, args_brief));
             let outcome = {
                 let mut ctx = Ctx { h };
-                tools::execute(&mut ctx, &tc.name, &args, false)
+                tools::execute(&mut ctx, &tc.name, &args, false, &cfg.mcp_servers)
             };
             (hooks.on_log)(&format!(
                 "← 工具 {} 完成 · {}ms",

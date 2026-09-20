@@ -3,9 +3,9 @@
   "kind": "rust",
   "bin": "onethu-harness",
   "name": "OneTHU Harness",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "author": "smartThise",
-  "description": "大模型驱动的清华校园助手（Rust 骨干）：对话式查课表/日程/成绩/新闻/空教室/校园卡/电费/校园网，日程云同步（查/建/改/删），图书馆座位与研讨间查询预约（两段式确认），清华邮箱（查/读/搜/发），清华云盘（查/搜/上传/分享），左下角常驻对话面板，实时进度与打断，多会话历史与上下文导出，token 用量与预算控制（对话助手「小OH」）。",
+  "description": "大模型驱动的清华校园助手（Rust 骨干）：对话式查课表/日程/成绩/新闻/空教室/校园卡/电费/校园网，日程云同步（查/建/改/删），图书馆座位与研讨间查询预约（两段式确认），清华邮箱（查/读/搜/发），清华云盘（查/搜/上传/分享），在线服务与实体一句话直达（按名字直接打开对应页面），接入 MCP 服务器与联动插件，模型源可选清华 MadModel 免费档，左下角常驻对话面板，实时进度与打断，多会话历史与上下文导出，token 用量与预算控制（对话助手「小OH」）。",
   "permissions": [
     "user:read",
     "info:read",
@@ -26,6 +26,8 @@
     "learn:write",
     "cal:read",
     "cal:write",
+    "llm",
+    "plugins:call",
     "mail:read",
     "mail:write",
     "cloud:read",
@@ -33,8 +35,28 @@
   ],
   "settings": [
     {
+      "key": "provider",
+      "label": "模型源",
+      "type": "select",
+      "default": "",
+      "options": [
+        {
+          "value": "madmodel",
+          "label": "清华 MadModel 免费（DeepSeek-V4-Flash · 校园网/VPN · 自动续期）"
+        },
+        {
+          "value": "custom",
+          "label": "自费 API（下方 Key/Endpoint/Model 生效）"
+        },
+        {
+          "value": "",
+          "label": "默认（自动：填了 Key 走自费，没填走 MadModel）"
+        }
+      ]
+    },
+    {
       "key": "apiKey",
-      "label": "API Key",
+      "label": "API Key（自费模式用）",
       "type": "password",
       "placeholder": "sk-…"
     },
@@ -46,7 +68,7 @@
     },
     {
       "key": "model",
-      "label": "模型",
+      "label": "模型（自费模式用；免费档固定 DeepSeek-V4-Flash）",
       "type": "text",
       "default": "deepseek-chat"
     },
@@ -70,19 +92,19 @@
     },
     {
       "key": "priceIn",
-      "label": "输入价格 $/1M tokens",
+      "label": "输入价格 $/1M tokens（自费模式）",
       "type": "text",
       "default": "0.27"
     },
     {
       "key": "priceOut",
-      "label": "输出价格 $/1M tokens",
+      "label": "输出价格 $/1M tokens（自费模式）",
       "type": "text",
       "default": "1.10"
     },
     {
       "key": "budget",
-      "label": "Token 预算（USD，到量停）",
+      "label": "Token 预算（USD，到量停；自费模式）",
       "type": "text",
       "default": "2"
     },
@@ -91,6 +113,18 @@
       "label": "单次任务最大步数",
       "type": "text",
       "default": "16"
+    },
+    {
+      "key": "madmodelToken",
+      "label": "MadModel Token（自动维护，勿手改）",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "madmodelAt",
+      "label": "MadModel 签发时刻（自动维护，勿手改）",
+      "type": "text",
+      "default": ""
     }
   ]
 }
