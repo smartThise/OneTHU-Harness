@@ -591,6 +591,12 @@ pub fn all_tools() -> Vec<ToolDef> {
             confirm: false,
         },
         ToolDef {
+            name: "query_usage",
+            desc: "查本机使用统计（用户自己点过什么）：返回总次数与最常用的页面/事物（带 kind+key）。用途：用户问「我最近都在用什么」「帮我把常用的打开」时先看这里，再用 open_page（或 navigate）打开；也可据此判断某个功能他到底用不用得上。数据只在本机，不含任何校园内容；不要把它当成学习成绩之类的隐私数据来解读",
+            params: p(json!({ "limit": {"type": "integer", "minimum": 1, "maximum": 30} }), &[]),
+            confirm: false,
+        },
+        ToolDef {
             name: "notify",
             desc: "在应用底部弹一条 toast 提示",
             params: p(json!({ "text": {"type": "string"} }), &["text"]),
@@ -2130,6 +2136,11 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 "candidates": others,
                 "note": if opened { "已在应用内打开" } else { "该条目已失效（对应的收藏或数据可能已被删除）" }
             })
+        }
+        "query_usage" => {
+            let limit = args.get("limit").and_then(|x| x.as_i64()).unwrap_or(10);
+            let limit = limit.clamp(1, 30);
+            host(ctx, "nav", "usage", json!([limit]))?
         }
         "notify" => {
             host(ctx, "ui", "toast", json!([s(args, "text")]))?;
