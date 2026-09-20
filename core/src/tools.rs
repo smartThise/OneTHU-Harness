@@ -583,7 +583,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open_page",
-            desc: "按名字在应用内直接打开一个页面或事物——用户说「打开亲友来访」「帮我开研讨间预约」「打开数据结构这门课」时用它，比 navigate 更省事：只需给名字，本工具自己检索并跳转（在线服务、课程、作业、通知、文件、场馆、教学楼、洗衣机楼、图书馆、新闻、今日组件、功能页面等）。先查本机缓存（快、离线）；本机没有时**自动兜底查一次在线服务目录**（容忍口语简称：「亲友预约」能命中「亲友来访预约」），所以在线服务不需要用户事先打开过。命中多个时返回 candidates，向用户确认后再带 kind 调用一次。回话时用目录里的正式名（官网口径），不要复述用户的口语叫法当作官方名称",
+            desc: "按名字在应用内直接打开一个页面或事物——用户说「打开亲友来访」「帮我开研讨间预约」「打开数据结构这门课」时用它，比 navigate 更省事：只需给名字，本工具自己检索并跳转（在线服务、课程、作业、通知、文件、场馆、教学楼、洗衣机楼、图书馆、新闻、今日组件、功能页面等）。先查本机缓存（快、离线）；本机没有时**自动兜底查一次在线服务目录**（容忍口语简称：「亲友预约」能命中「亲友来访预约」），所以在线服务不需要用户事先打开过。命中多个时返回 candidates，向用户确认后再带 kind 调用一次。目录里只有「有点像」的名字时（返回 similar/score 且 opened=false）**不会**替你打开，要先把候选念给用户确认，再用确认的正式名调一次。回话时用目录里的正式名（官网口径），不要复述用户的口语叫法当作官方名称；查询失败与「确实没有」要分开说，别把失败说成学校没这个服务",
             params: p(json!({
                 "query": {"type": "string", "description": "页面或事物的名字，如「亲友来访」「缓考」「数据结构」「研讨间预约」"},
                 "kind": {"type": "string", "description": "可选：限定原子种类（如 thos-service / course / sports-v / library），不确定就不要传"}
@@ -2157,28 +2157,37 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
 }
 
 /// 本地原子缓存未命中时的服务目录兜底：
-/// 走宿主 `services.search`（一次校园请求，容忍口语简称）→ `services.open`（应用内官方页，
-/// 与用户点在线服务同一条链路）。当前平台不支持、未登录、或目录里没有相近名 → Ok(None)，
-/// 由调用方回落成原有的「先打开一次」提示（绝不编造一个不存在的入口）。
+/// 走宿主 `services.search`（一次校园请求，容忍口语简称）→ 分数够高才 `services.open`
+/// （应用内官方页，与用户点在线服务同一条链路）。
+///
+/// 三档处置（对应返回里的 note，模型据此回话）：
+///   · score ≥ 40：有把握 → 直接打开；
+///   · 20 ~ 39：只是「像」（如 亲友预约 ↔ 亲友入校报备）→ **不打开**，把候选交回模型，
+///     让用户确认叫法后再用正式名调一次（正式名会命中 100 分）；
+///   · 查询失败（未登录 / 平台不支持 / 接口不可用）或目录里确实没有 → Ok(None)，
+///     只有当查询**成功但为空**时才回落成「没有相近名称」，失败要说失败的原因。
 fn try_open_service(ctx: &mut Ctx, query: &str, want_kind: &str) -> Result<Option<Value>, String> {
     if !want_kind.is_empty() && want_kind != "thos-service" {
         return Ok(None);
     }
     let hits = match host(ctx, "services", "search", json!([query, 5])) {
         Ok(v) => arr_of(&v),
-        Err(_) => return Ok(None), // 会话失效/平台不支持：按本地未命中处理
+        Err(e) => {
+            // 会话失效/接口不可用：如实说明，别让模型以为「学校没这个服务」
+            // （失败原因随工具结果回给模型，dock 里用户也看得到，无需另找日志通道）
+            return Ok(Some(json!({
+                "opened": false,
+                "reason": format!("本机没有缓存「{query}」，查在线服务目录也没成功（{e}）。可以稍后再试一次，或让用户先在应用里打开一次该服务"),
+                "candidates": []
+            })));
+        }
     };
     let first = match hits.first() {
         Some(f) => f.clone(),
         None => return Ok(None),
     };
-    let opened = host(
-        ctx,
-        "services",
-        "open",
-        json!([{ "id": s(&first, "id"), "name": s(&first, "name"), "url": s(&first, "url") }]),
-    )?;
-    let opened = opened.as_bool().unwrap_or(false);
+    let score = first.get("score").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let title = s(&first, "name");
     let others: Vec<Value> = hits
         .iter()
         .skip(1)
@@ -2191,9 +2200,38 @@ fn try_open_service(ctx: &mut Ctx, query: &str, want_kind: &str) -> Result<Optio
             })
         })
         .collect();
+    let also = hits
+        .iter()
+        .map(|h| {
+            json!({
+                "name": s(h, "name"),
+                "department": s(h, "department"),
+                "score": h.get("score").and_then(|x| x.as_f64()).unwrap_or(0.0)
+            })
+        })
+        .collect::<Vec<_>>();
+    // 分数不够：不动手打开，交回候选让用户点头
+    if score < 40.0 {
+        return Ok(Some(json!({
+            "opened": false,
+            "reason": format!("本机没有缓存「{query}」；服务目录里有名字相近的服务，但把握不足，**没有**替你打开：请先在回话里列出候选让用户确认叫法，再用他确认的正式名调一次 open_page"),
+            "title": title,
+            "kind": "thos-service",
+            "group": "在线服务",
+            "candidates": others,
+            "similar": also
+        })));
+    }
+    let opened = host(
+        ctx,
+        "services",
+        "open",
+        json!([{ "id": s(&first, "id"), "name": title, "url": s(&first, "url") }]),
+    )?;
+    let opened = opened.as_bool().unwrap_or(false);
     Ok(Some(json!({
         "opened": opened,
-        "title": s(&first, "name"),
+        "title": title,
         "kind": "thos-service",
         "group": "在线服务",
         "candidates": others,
