@@ -583,7 +583,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open_page",
-            desc: "按名字在应用内直接打开一个页面或事物——用户说「打开亲友来访」「帮我开研讨间预约」「打开数据结构这门课」时用它，比 navigate 更省事：只需给名字，本工具自己检索并跳转（在线服务、课程、作业、通知、文件、场馆、教学楼、洗衣机楼、图书馆、新闻、今日组件、功能页面等）。命中多个时返回 candidates，向用户确认后再带 kind 调用一次。只能命中本机已缓存过的东西（某个服务/课程此前在应用里打开过一次即入缓存）；找不到时提示用户先在对应页面看一眼，别改口说做不到",
+            desc: "按名字在应用内直接打开一个页面或事物——用户说「打开亲友来访」「帮我开研讨间预约」「打开数据结构这门课」时用它，比 navigate 更省事：只需给名字，本工具自己检索并跳转（在线服务、课程、作业、通知、文件、场馆、教学楼、洗衣机楼、图书馆、新闻、今日组件、功能页面等）。先查本机缓存（快、离线）；本机没有时**自动兜底查一次在线服务目录**（容忍口语简称：「亲友预约」能命中「亲友来访预约」），所以在线服务不需要用户事先打开过。命中多个时返回 candidates，向用户确认后再带 kind 调用一次。回话时用目录里的正式名（官网口径），不要复述用户的口语叫法当作官方名称",
             params: p(json!({
                 "query": {"type": "string", "description": "页面或事物的名字，如「亲友来访」「缓考」「数据结构」「研讨间预约」"},
                 "kind": {"type": "string", "description": "可选：限定原子种类（如 thos-service / course / sports-v / library），不确定就不要传"}
@@ -2112,9 +2112,14 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             let picked = match pick {
                 Some(p) => p,
                 None => {
+                    // 本机缓存没有 → 兜底：查一次在线服务目录（仅当没限定别的 kind）。
+                    // 目录命中的结果由宿主写回原子缓存，此后本地检索即可命中。
+                    if let Some(out) = try_open_service(ctx, &q, &want_kind)? {
+                        return Ok(ToolOut::Text(pretty(&out)));
+                    }
                     return Ok(ToolOut::Text(pretty(&json!({
                         "opened": false,
-                        "reason": format!("本机没有检索到「{q}」。它可能还没在本机出现过——让用户先在对应页面打开一次，之后就能一句话直达"),
+                        "reason": format!("本机没有检索到「{q}」，在线服务目录里也没有相近的服务名。若用户给的是简称，可问一句完整叫法；其它入口需要他在对应页面打开过一次才能一句话直达"),
                         "candidates": []
                     }))));
                 }
@@ -2149,6 +2154,51 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         other => return Err(format!("未知工具：{other}")),
     };
     Ok(ToolOut::Text(pretty(&out)))
+}
+
+/// 本地原子缓存未命中时的服务目录兜底：
+/// 走宿主 `services.search`（一次校园请求，容忍口语简称）→ `services.open`（应用内官方页，
+/// 与用户点在线服务同一条链路）。当前平台不支持、未登录、或目录里没有相近名 → Ok(None)，
+/// 由调用方回落成原有的「先打开一次」提示（绝不编造一个不存在的入口）。
+fn try_open_service(ctx: &mut Ctx, query: &str, want_kind: &str) -> Result<Option<Value>, String> {
+    if !want_kind.is_empty() && want_kind != "thos-service" {
+        return Ok(None);
+    }
+    let hits = match host(ctx, "services", "search", json!([query, 5])) {
+        Ok(v) => arr_of(&v),
+        Err(_) => return Ok(None), // 会话失效/平台不支持：按本地未命中处理
+    };
+    let first = match hits.first() {
+        Some(f) => f.clone(),
+        None => return Ok(None),
+    };
+    let opened = host(
+        ctx,
+        "services",
+        "open",
+        json!([{ "id": s(&first, "id"), "name": s(&first, "name"), "url": s(&first, "url") }]),
+    )?;
+    let opened = opened.as_bool().unwrap_or(false);
+    let others: Vec<Value> = hits
+        .iter()
+        .skip(1)
+        .map(|h| {
+            json!({
+                "kind": "thos-service",
+                "title": s(h, "name"),
+                "sub": s(h, "department"),
+                "group": "在线服务"
+            })
+        })
+        .collect();
+    Ok(Some(json!({
+        "opened": opened,
+        "title": s(&first, "name"),
+        "kind": "thos-service",
+        "group": "在线服务",
+        "candidates": others,
+        "note": "结果来自在线服务目录（本机此前没缓存过这个服务）；回话用目录里的正式名。若用户说的其实是别的同名事物，可用 candidates 或再调一次本工具带上 kind"
+    })))
 }
 
 fn or_default(v: &str, d: &str) -> String {
