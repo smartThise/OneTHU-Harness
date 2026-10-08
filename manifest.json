@@ -42,7 +42,7 @@
       "options": [
         {
           "value": "madmodel",
-          "label": "清华 MadModel 免费（DeepSeek-V4-Flash · 校园网/VPN · 自动续期）"
+          "label": "清华 MadModel 免费（DeepSeek-V4.1-Flash · 校园网/VPN · 自动续期）"
         },
         {
           "value": "custom",
@@ -68,7 +68,7 @@
     },
     {
       "key": "model",
-      "label": "模型（自费模式用；免费档固定 DeepSeek-V4-Flash）",
+      "label": "模型（自费模式用；免费档固定 DeepSeek-V4.1-Flash）",
       "type": "text",
       "default": "deepseek-chat"
     },

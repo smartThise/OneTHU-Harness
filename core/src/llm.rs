@@ -125,7 +125,7 @@ pub fn chat_turn(
     if url_contains_madmodel(cfg) {
         if !cfg.madmodel_ok {
             return Err(LlmError {
-                message: "外网环境无法使用清华免费 DeepSeek（MadModel 仅限校内 IP）。\n                          · 连校园网或学校 VPN（EasyConnect）后自动恢复免费档；\n                          · 或在 插件页 → OneTHU Harness → 设置 里填入自费 API Key 并把模型源切到「自费 API」。"
+                message: "清华免费 DeepSeek 当前不可用：直连被校园网 IP 门禁拦截，且 webvpn 包装通道未就绪。\n                          · 在 OneTHU 里登录一次清华账号（建立 webvpn 会话后会自动走包装通道）；\n                          · 或连校园网/学校 VPN（EasyConnect）；\n                          · 或在 插件页 → OneTHU Harness → 设置 里切到「自费 API」。"
                     .into(),
             });
         }
@@ -163,17 +163,26 @@ pub fn chat_turn(
         let _ = std::fs::write(&dp, &body_s);
     }
     let api_key = cfg.api_key.clone();
+    let cookie = cfg.madmodel_cookie.clone();
     let post = move |a: &ureq::Agent| {
-        a.post(&url)
+        let req = a
+            .post(&url)
             .set("Authorization", &format!("Bearer {}", api_key))
-            .set("Content-Type", "application/json")
-            .send_string(&body_s)
+            .set("Content-Type", "application/json");
+        // 校外 webvpn 通道：包装域需要 wengine 会话票。ureq 没有 cookie 仓，
+        // 由宿主在每次对话前的 preflight 里从本机 jar 取出并写进设置。
+        let req = if cookie.is_empty() { req } else { req.set("Cookie", &cookie) };
+        req.send_string(&body_s)
     };
     // 快失败竞速（R8）：paratera 等网关是双峰后端（实测首字节 <1s 或 8~30s）。
     // 流式交互请求首字节 4s 未到即弃线重试（快峰占多数，两次重试后命中快后端 >90%）；
     // 弃用的连接由分离线程自行结束（读上限 75s）。非流式请求首字节≈完整生成，不适用。
     let mut resp: Option<Result<ureq::Response, ureq::Error>> = None;
-    if cfg.stream {
+    // 回环中继通道（校外）不做快失败竞速：3 秒阈值是为「校内直连网关双峰后端」定的，
+    // 校外经 webvpn 首字节实测 5–10s → 三次尝试全被弃线（白烧三次生成，最终仍要走一次
+    // 阻塞请求）。此处直接走阻塞请求，悬挂由 75s 读超时兜底。
+    let via_relay = cfg.base_url.contains("127.0.0.1");
+    if cfg.stream && !via_relay {
         const FAST_FAIL_MS: u64 = 3000;
         let mut raced = false;
         for attempt in 0..3 {
@@ -223,10 +232,17 @@ pub fn chat_turn(
     // token 校验之前），ureq 跟随后落到 HTML → JSON 解析报错难懂。给出人话。
     let status = resp.status();
     if (status >= 300 && status < 400) || (status == 200 && resp.content_type().to_string().contains("text/html")) {
-        return Err(LlmError {
-            message: "MadModel 拒绝了当前网络（IP 门禁 307，token 校验前就拦截）。该免费服务仅限校园网内 IP：                      请连校园网/学校 VPN（如 EasyConnect），或在插件设置把模型源切回自费 API。"
-                .into(),
-        });
+        // 包装域回 HTML 与直连被 IP 门禁是两件事：前者是 wengine 把请求弹回登录页
+        // （会话票过期/未注入，宿主据此重签并刷新票据），后者才是校外 IP 拦截。
+        // 校外通道有两种形态：中继（127.0.0.1，宿主内转发）与直接包装域。两者被弹回
+        // 登录页都属「会话失效」，与直连吃 IP 门禁是两件事，文案分开（宿主据此自愈）。
+        let via_channel = cfg.base_url.contains("webvpn.tsinghua.edu.cn") || cfg.base_url.contains("127.0.0.1");
+        let message = if via_channel {
+            "webvpn 会话已失效：免费档请求被弹回登录页（校外包装通道）。宿主会自动重签并刷新会话票；若反复出现，请在 设置 → 插件 → OneTHU Harness 重新登录清华账号。"
+        } else {
+            "MadModel 拒绝了当前网络（IP 门禁 307，token 校验前就拦截）。该免费服务仅限校园网内 IP：请连校园网/学校 VPN（如 EasyConnect），或在插件设置把模型源切回自费 API。"
+        };
+        return Err(LlmError { message: message.into() });
     }
     if cfg.stream {
         let ctype = resp.content_type().to_string();

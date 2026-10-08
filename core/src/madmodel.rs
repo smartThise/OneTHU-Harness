@@ -7,5 +7,6 @@
 
 /// OpenAI 兼容端点（chat/completions 拼接用）
 pub const BASE: &str = "https://madmodel.cs.tsinghua.edu.cn/v1";
-/// 免费档模型（150k 上下文）
-pub const MODEL: &str = "DeepSeek-V4-Flash-0731";
+/// 免费档模型：站点 2026-09 把 DeepSeek-V4-Flash-0731 换成了 DeepSeek-V4.1-Flash
+/// （旧名请求直接「模型不存在」；站点无模型列表接口，改版时需照站点前端清单更新）
+pub const MODEL: &str = "DeepSeek-V4.1-Flash";

@@ -12,6 +12,8 @@ pub struct Config {
     pub api_key: String,
     /// MadModel 免费档当前是否可用（校内可达且未回退自费）；false 时 chat_turn 预检提醒
     pub madmodel_ok: bool,
+    /// 校外 webvpn 通道：包装基址下随请求携带的 wengine 会话票（宿主每次对话前刷新）
+    pub madmodel_cookie: String,
     /// 本次解析是否走「清华免费档」（provider 未显式 custom，且未回退自费）。
     /// 用于把「免费档 token 未就绪」与「没填自费 API Key」两种报错分开——
     /// 前者说「未配置 API Key」会把人误导到手填 key（用户实录 2026-09-20）。
@@ -96,21 +98,35 @@ impl Config {
                 // 校外兜底三态（2026-09-19 定案）：泵探针把可达性写进 madmodelReachable。
                 // 校内 → 免费档；校外 + 已填自费 Key → 自动回退自费（用户无感）；
                 // 校外 + 无自费 → 维持免费档参数，chat_turn 预检给出提醒文案。
-                let outside = get("madmodelReachable") == "0";
+                // 2026-10-08 改：校外不再自动切自费——webvpn 包装通道已打通（校外取票 →
+                // 包装域兑换 → 带会话票调用）。仅在**拿不到免费档 token**（统一认证未就绪、
+                // 宿主尚在签发）且填了自费 key 时临时走自费；宿主签到后下一轮 run 即回免费档
+                // （设置每次 run 实时读取，R3）。
                 let has_custom = !get("apiKey").is_empty();
-                if outside && has_custom {
+                let tok_now = get("madmodelToken");
+                if tok_now.is_empty() && has_custom {
                     (get("apiKey"), base.clone(), model.clone(), get_num("priceIn", 0.27).max(0.0), get_num("priceOut", 1.10).max(0.0))
                 } else {
                     uses_free_tier = true;
                     let tok = get("madmodelToken");
-                    (tok, crate::madmodel::BASE.to_string(), crate::madmodel::MODEL.to_string(), 0.0, 0.0)
+                    // 校外通道（2026-10-08）：宿主把包装后的 v1 基址写进 madmodelBase——
+                    // 非空即走包装域（配 madmodelCookie）；空 = 校内直连（原语义）
+                    let mm_base = {
+                        let b = get("madmodelBase");
+                        if b.is_empty() { crate::madmodel::BASE.to_string() } else { b }
+                    };
+                    (tok, mm_base, crate::madmodel::MODEL.to_string(), 0.0, 0.0)
                 }
             }
         };
-        // 免费档可用性 = 非校外拦停场景（校外且无自费时 false → llm 预检出提醒）
-        let madmodel_ok = !(get("madmodelReachable") == "0" && get("apiKey").is_empty());
+        // 免费档网络可达性：校内直连恒可达；校外看宿主是否已备好可用基址。
+        // 2026-10-08 实测修正：wengine 会话需要**完整 cookie 集**（refresh/heartbeat/票…），
+        // 单张票注入必被弹登录 → 校外改由宿主侧回环中继承载会话（madmodelBase 指
+        // 127.0.0.1），故就绪判据只看基址是否非空；madmodelCookie 仅在直接指包装域时可选使用。
+        let madmodel_ok = get("madmodelReachable") != "0" || !get("madmodelBase").is_empty();
         Config {
             madmodel_ok,
+            madmodel_cookie: get("madmodelCookie"),
             uses_free_tier,
             api_key,
             base_url: base,
@@ -292,5 +308,60 @@ mod tests {
     fn est_tokens_basic() {
         assert!(est_tokens("你好世界") >= 4);
         assert!(est_tokens("abcdef") >= 2);
+    }
+
+    fn base_map() -> serde_json::Map<String, Value> {
+        let mut m = serde_json::Map::new();
+        m.insert("provider".into(), json!("madmodel"));
+        m.insert("apiKey".into(), json!("sk-x"));
+        m.insert("madmodelToken".into(), json!("tok"));
+        m.insert("madmodelReachable".into(), json!("0"));
+        m.insert("madmodelBase".into(), json!("https://webvpn.tsinghua.edu.cn/https/aa/v1"));
+        m.insert("madmodelCookie".into(), json!("wengine_vpn_ticket=wrdvpn1-test"));
+        m
+    }
+
+    /// 2026-10-08 定案：校外 + 有自费 key 仍走免费档（包装通道），不再自动切自费。
+    #[test]
+    fn madmodel_offcampus_keeps_free_tier() {
+        let c = Config::from_settings(&base_map());
+        assert!(c.uses_free_tier, "校外有包装参数时应走免费档");
+        assert_eq!(c.api_key, "tok");
+        assert!(c.base_url.contains("webvpn.tsinghua.edu.cn"), "校外基址应取包装域");
+        assert!(c.madmodel_ok, "包装通道就绪 = 网络可达");
+        assert!(!c.madmodel_cookie.is_empty(), "会话票应透传");
+    }
+
+    /// 拿不到 token 且填了自费 key：临时走自费（宿主签到后自动回免费档）。
+    #[test]
+    fn madmodel_falls_back_while_token_missing() {
+        let mut m = base_map();
+        m.insert("madmodelToken".into(), json!(""));
+        let c = Config::from_settings(&m);
+        assert!(!c.uses_free_tier);
+        assert_eq!(c.api_key, "sk-x");
+    }
+
+    /// 校外且宿主没备好基址 = 网络不可达（llm 预检出提醒，而不是发一个必然 307 的请求）。
+    #[test]
+    fn madmodel_offcampus_without_wrapped_params_is_unreachable() {
+        let mut m = base_map();
+        m.insert("madmodelBase".into(), json!(""));
+        m.insert("madmodelCookie".into(), json!(""));
+        let c = Config::from_settings(&m);
+        assert!(!c.madmodel_ok);
+        assert!(c.uses_free_tier, "仍然持有免费档参数，由预检给指引");
+    }
+
+    /// 校外走宿主侧回环中继（实测可行路径）：基址指 127.0.0.1、无需 cookie，也算可达。
+    #[test]
+    fn madmodel_offcampus_via_loopback_relay_is_ok() {
+        let mut m = base_map();
+        m.insert("madmodelBase".into(), json!("http://127.0.0.1:8797/v1"));
+        m.insert("madmodelCookie".into(), json!(""));
+        let c = Config::from_settings(&m);
+        assert!(c.madmodel_ok, "中继通道就绪即视为可达");
+        assert!(c.uses_free_tier);
+        assert!(c.base_url.starts_with("http://127.0.0.1"));
     }
 }
