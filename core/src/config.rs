@@ -115,7 +115,13 @@ impl Config {
                         let b = get("madmodelBase");
                         if b.is_empty() { crate::madmodel::BASE.to_string() } else { b }
                     };
-                    (tok, mm_base, crate::madmodel::MODEL.to_string(), 0.0, 0.0)
+                    // 模型不再钦定（2026-10-09）：宿主泵实时爬取站点清单写 madmodelModel，
+                    // 空则回退常量默认（站点改版前的老行为）
+                    let mm_model = {
+                        let m = get("madmodelModel");
+                        if m.is_empty() { crate::madmodel::MODEL.to_string() } else { m }
+                    };
+                    (tok, mm_base, mm_model, 0.0, 0.0)
                 }
             }
         };
@@ -330,6 +336,24 @@ mod tests {
         assert!(c.base_url.contains("webvpn.tsinghua.edu.cn"), "校外基址应取包装域");
         assert!(c.madmodel_ok, "包装通道就绪 = 网络可达");
         assert!(!c.madmodel_cookie.is_empty(), "会话票应透传");
+    }
+
+    /// 2026-10-09：免费档模型不再钦定——madmodelModel 设置优先，空则常量兜底。
+    #[test]
+    fn madmodel_model_from_settings_wins() {
+        let mut m = base_map();
+        m.insert("madmodelModel".into(), json!("DeepSeek-R1-W8A8"));
+        let c = Config::from_settings(&m);
+        assert_eq!(c.model, "DeepSeek-R1-W8A8", "设置里的模型应生效");
+        assert!(c.uses_free_tier);
+    }
+
+    /// 设置为空 → 回退常量默认（站点改版前行为不破坏）。
+    #[test]
+    fn madmodel_model_defaults_to_constant_when_unset() {
+        let m = base_map();
+        let c = Config::from_settings(&m);
+        assert_eq!(c.model, crate::madmodel::MODEL);
     }
 
     /// 拿不到 token 且填了自费 key：临时走自费（宿主签到后自动回免费档）。

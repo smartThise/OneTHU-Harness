@@ -67,6 +67,18 @@
       "default": "https://api.deepseek.com/v1"
     },
     {
+      "key": "madmodelModel",
+      "label": "免费档模型（站点清单实时同步；空=默认）",
+      "type": "select",
+      "optionsFrom": "madmodelModels",
+      "options": [
+        {
+          "value": "",
+          "label": "默认（DeepSeek-V4.1-Flash）"
+        }
+      ]
+    },
+    {
       "key": "model",
       "label": "模型（自费模式用；免费档固定 DeepSeek-V4.1-Flash）",
       "type": "text",
