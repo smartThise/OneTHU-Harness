@@ -602,6 +602,97 @@ pub fn all_tools() -> Vec<ToolDef> {
             params: p(json!({ "text": {"type": "string"} }), &["text"]),
             confirm: false,
         },
+        // ── OH 记忆（云端记忆共享，docs/memory-cloud；引擎在宿主 TS 侧，经门禁 memory:read/write）──
+        ToolDef {
+            name: "memory_search",
+            desc: "检索长期记忆（个人偏好/课程上下文/任务状态等）。用户提到「我之前说过」「记住过」或需要个性化上下文时先调用本工具。query 空格分词；tags/type/folder 可选过滤；返回 permalink 列表+摘要。",
+            params: p(json!({
+                "query": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "type": {"type": "string"},
+                "folder": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20}
+            }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "memory_read",
+            desc: "按 permalink 读一条记忆的全文（超 8KB 截断）。permalink 从 memory_search/memory_list 获取。",
+            params: p(json!({ "permalink": {"type": "string"} }), &["permalink"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "memory_list",
+            desc: "列记忆清单（不读正文）：folder 如 preferences/courses/tasks/knowledge/journal，tag 可选。",
+            params: p(json!({ "folder": {"type": "string"}, "tag": {"type": "string" } }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "memory_write",
+            desc: "新建一条长期记忆（执行前会请用户确认）。title 必须把同义词折叠进去（如「线性代数」而非「那门数学课」）；observations 每条 = {category, text}（category 如 preference/context/habit/fact）；写前先 memory_search 查重，已有同主题实体就改 memory_append。",
+            params: p(json!({
+                "title": {"type": "string"},
+                "observations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string"},
+                            "text": {"type": "string"},
+                            "context": {"type": "string"}
+                        },
+                        "required": ["category", "text"]
+                    }
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": { "rel": {"type": "string"}, "target": {"type": "string"}, "context": {"type": "string" } },
+                        "required": ["rel", "target"]
+                    }
+                },
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "type": {"type": "string"}
+            }), &["title", "observations"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "memory_append",
+            desc: "给已有记忆追加一条观察（执行前会请用户确认）。permalink 从 search/list 获取；category 如 context/habit/fact。",
+            params: p(json!({
+                "permalink": {"type": "string"},
+                "category": {"type": "string"},
+                "text": {"type": "string"},
+                "context": {"type": "string"}
+            }), &["permalink", "category", "text"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "memory_edit",
+            desc: "对一条记忆做字面替换改写（执行前会请用户确认）。找不到 find 文本会报错；改前先 memory_read 核对原文。",
+            params: p(json!({
+                "permalink": {"type": "string"},
+                "find": {"type": "string"},
+                "replace": {"type": "string"}
+            }), &["permalink", "find", "replace"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "memory_delete",
+            desc: "归档一条记忆（软删进 .trash，执行前会请用户确认并显示标题）。",
+            params: p(json!({
+                "permalink": {"type": "string"},
+                "reason": {"type": "string"}
+            }), &["permalink"]),
+            confirm: true,
+        },
+        ToolDef {
+            name: "memory_refresh",
+            desc: "重扫记忆镜像并重建账本（排障用：云盘拉取或手工改动后对齐）。",
+            params: p(json!({}), &[]),
+            confirm: false,
+        },
         ToolDef {
         name: "list_plugin_cmds",
         desc: "列出当前已启用插件的命令清单（联动插件）。需要执行插件能力时，先调用本工具查看可用命令，再用 run_plugin_cmd 执行。",
@@ -972,6 +1063,104 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             format!("可用插件命令：\n{}", lines.join("\n"))
         };
         return Ok(ToolOut::Text(text));
+    }
+    // ── OH 记忆（引擎在宿主 TS 侧；写操作走 confirm 两段式，权限门禁 memory:read/write）──
+    if name == "memory_search" {
+        let q = json!({
+            "query": s(args, "query"),
+            "tags": args.get("tags").cloned().unwrap_or(json!([])),
+            "type": s(args, "type"),
+            "folder": s(args, "folder"),
+            "limit": args.get("limit").cloned().unwrap_or(json!(8)),
+        });
+        let v = host(ctx, "memory", "search", json!([q]))?;
+        let hits = v.as_array().cloned().unwrap_or_default();
+        if hits.is_empty() {
+            return Ok(ToolOut::Text("没有找到相关记忆（可换关键词，或用 memory_list 浏览）。".into()));
+        }
+        let mut out = String::new();
+        for h in hits {
+            let p = h.get("permalink").and_then(|x| x.as_str()).unwrap_or("");
+            let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
+            let tags = h
+                .get("tags")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(","))
+                .unwrap_or_default();
+            let sn = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
+            let via = h.get("via").and_then(|x| x.as_str()).unwrap_or("");
+            if via.is_empty() {
+                out.push_str(&format!("- {p} 「{t}」 tags=[{tags}] {sn}\n"));
+            } else {
+                out.push_str(&format!("- {p} 「{t}」 tags=[{tags}] 关联自「{via}」\n"));
+            }
+        }
+        return Ok(ToolOut::Text(out));
+    }
+    if name == "memory_read" {
+        let permalink = s(args, "permalink");
+        if permalink.is_empty() {
+            return Ok(ToolOut::Text("缺少 permalink（用 memory_search/memory_list 获取）".into()));
+        }
+        let v = host(ctx, "memory", "read", json!([permalink]))?;
+        return Ok(ToolOut::Text(match v {
+            Value::String(t) => t,
+            other => serde_json::to_string_pretty(&other).unwrap_or_default(),
+        }));
+    }
+    if name == "memory_list" {
+        let opts = json!({ "folder": s(args, "folder"), "tag": s(args, "tag") });
+        let v = host(ctx, "memory", "list", json!([opts]))?;
+        let items = v.as_array().cloned().unwrap_or_default();
+        if items.is_empty() {
+            return Ok(ToolOut::Text("记忆库为空（或该目录/标签下没有条目）。".into()));
+        }
+        let mut out = format!("共 {} 条：\n", items.len());
+        for it in items {
+            let p = it.get("permalink").and_then(|x| x.as_str()).unwrap_or("");
+            let t = it.get("title").and_then(|x| x.as_str()).unwrap_or("");
+            let ty = it.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            let f = it.get("folder").and_then(|x| x.as_str()).unwrap_or("");
+            let m = it.get("modified").and_then(|x| x.as_str()).unwrap_or("");
+            out.push_str(&format!("- {p} 「{t}」 {ty} {f} {m}\n"));
+        }
+        return Ok(ToolOut::Text(out));
+    }
+    if name == "memory_write" {
+        let input = json!({
+            "title": s(args, "title"),
+            "observations": args.get("observations").cloned().unwrap_or(json!([])),
+            "relations": args.get("relations").cloned().unwrap_or(json!([])),
+            "tags": args.get("tags").cloned().unwrap_or(json!([])),
+            "type": s(args, "type"),
+        });
+        let v = host(ctx, "memory", "write", json!([input]))?;
+        let p = v.get("permalink").and_then(|x| x.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("已创建记忆：{p}")));
+    }
+    if name == "memory_append" {
+        let _ = host(ctx, "memory", "append", json!([
+            s(args, "permalink"), s(args, "category"), s(args, "text"), s(args, "context")
+        ]))?;
+        return Ok(ToolOut::Text("已追加观察。".into()));
+    }
+    if name == "memory_edit" {
+        let _ = host(ctx, "memory", "edit", json!([
+            s(args, "permalink"), s(args, "find"), s(args, "replace")
+        ]))?;
+        return Ok(ToolOut::Text("已改写。".into()));
+    }
+    if name == "memory_delete" {
+        let v = host(ctx, "memory", "delete", json!([
+            s(args, "permalink"), s(args, "reason")
+        ]))?;
+        let t = v.get("trashedTo").and_then(|x| x.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("已归档（软删除）到 {t}")));
+    }
+    if name == "memory_refresh" {
+        let v = host(ctx, "memory", "refresh", json!([]))?;
+        let n = v.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
+        return Ok(ToolOut::Text(format!("已重扫记忆镜像并重建账本（{n} 条）。")));
     }
     if name == "run_plugin_cmd" {
         let pid = s(args, "pluginId");

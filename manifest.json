@@ -27,6 +27,8 @@
     "cal:read",
     "cal:write",
     "llm",
+    "memory:read",
+    "memory:write",
     "plugins:call",
     "mail:read",
     "mail:write",
