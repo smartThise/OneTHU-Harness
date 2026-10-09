@@ -481,11 +481,42 @@ pub fn switch_session(h: &mut dyn Host, id: &str) -> Value {
 
 pub fn delete_session(h: &mut dyn Host, id: &str) -> Value {
     let mut store = Store::load(h);
+    // 1 号主对话（sessions[0]，永久默认会话）不可删除——OH/IM 一致（用户定案 2026-10-09）
+    if let Some(main) = store.sessions.first() {
+        if main.id == id {
+            return json!({ "type": "sessions", "ok": false, "error": "1 号主对话不可删除（永久默认会话）", "active": store.active, "sessions": session_list(&store) });
+        }
+    }
     let ok = store.delete(id);
     if ok {
         store.save(h);
     }
     json!({ "type": "sessions", "ok": ok, "active": store.active, "sessions": session_list(&store) })
+}
+
+/// 云盘主对话恢复（sessionSync pull 用）：用远端 JSON 替换 sessions[0] 的内容
+/// （id 保留——编号/引用稳定），并把 active 切回主对话。与 import_session 的区别：
+/// import 追加新 id（会堆积重复），restore 原位更新。
+pub fn restore_main(h: &mut dyn Host, text: &str) -> Value {
+    let mut store = Store::load(h);
+    match serde_json::from_str::<session::Session>(text.trim()) {
+        Ok(remote) => {
+            let Some(main) = store.sessions.first_mut() else {
+                return json!({ "type": "session", "ok": false, "error": "本地无主对话可恢复" });
+            };
+            if remote.updated_at <= main.updated_at {
+                return json!({ "type": "session", "ok": false, "error": "本地不旧于远端，无需恢复" });
+            }
+            main.messages = remote.messages;
+            main.title = remote.title;
+            main.updated_at = remote.updated_at;
+            main.pending = None;
+            store.active = main.id.clone();
+            store.save(h);
+            json!({ "type": "session", "ok": true, "sessionId": store.active.clone(), "sessions": session_list(&store) })
+        }
+        Err(e) => json!({ "type": "session", "ok": false, "error": format!("恢复失败：{e}") }),
+    }
 }
 
 /// 导出完整会话上下文（R5：JSON）

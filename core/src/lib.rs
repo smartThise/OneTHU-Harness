@@ -44,6 +44,7 @@ pub fn dispatch(h: &mut dyn Host, emit: &dyn Emit, command: &str, input: &str) -
         "delete_session" => agent::delete_session(h, input.trim()),
         "export_session" => agent::export_session(h, input.trim()),
         "import_session" => agent::import_session(h, input),
+        "restore_main" => agent::restore_main(h, input),
         "usage_report" => agent::usage_report(h),
         "selftest" => agent::selftest(),
         "" => json!({ "type": "chat", "ok": false, "error": "缺少命令名" }),
