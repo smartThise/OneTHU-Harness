@@ -93,6 +93,22 @@
       "default": "off"
     },
     {
+      "key": "multimodal",
+      "label": "多模态（图片输入；madmodel V4.1-Flash / deepseek-v4-vision 等支持）",
+      "type": "select",
+      "options": [
+        {
+          "value": "off",
+          "label": "关闭（图片只传路径与文字预览）"
+        },
+        {
+          "value": "on",
+          "label": "开启（图片按图像模态直接喂给模型）"
+        }
+      ],
+      "default": "off"
+    },
+    {
       "key": "maxContext",
       "label": "上下文预算（tokens，超出裁剪）",
       "type": "text",

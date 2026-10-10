@@ -9,7 +9,7 @@ use crate::config::est_tokens;
 use crate::host::Host;
 use crate::usage::Usage;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub const STORE_KEY: &str = "harness.v1";
 const MAX_SESSIONS: usize = 24;
@@ -29,14 +29,25 @@ pub struct Msg {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// 图像附件（data URL，如 `data:image/jpeg;base64,…`；2026-10-11 多模态）。
+    /// **`#[serde(skip)]` 是硬要求**：图片 base64 绝不能进 storage blob——
+    /// 那个 blob 有 1.2MB 上限，几张图就会把历史会话挤掉（session::Store::save）。
+    /// 图片只活在**当前这一轮 run 的内存里**：agent 全程用同一份内存 store（多步工具
+    /// 循环期间也一直在），下一轮 run 从 storage 重新载入时自然不带图（历史仍是文本）。
+    #[serde(skip)]
+    pub images: Vec<String>,
 }
 
 impl Msg {
     pub fn user(text: &str) -> Msg {
-        Msg { role: "user".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None }
+        Msg { role: "user".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None, images: Vec::new() }
+    }
+    /// 带图的用户消息（多模态开关打开时由 agent 构造；images 为 data URL 列表）
+    pub fn user_with_images(text: &str, images: Vec<String>) -> Msg {
+        Msg { role: "user".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None, images }
     }
     pub fn assistant(text: &str) -> Msg {
-        Msg { role: "assistant".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None }
+        Msg { role: "assistant".into(), content: Some(text.into()), reasoning: None, tool_calls: None, tool_call_id: None, name: None, images: Vec::new() }
     }
     pub fn tool_result(call_id: &str, text: &str) -> Msg {
         Msg {
@@ -46,13 +57,31 @@ impl Msg {
             tool_calls: None,
             tool_call_id: Some(call_id.into()),
             name: None,
+            images: Vec::new(),
         }
     }
-    pub fn to_value(&self) -> Value {
+    /// 请求体里的这一条消息。
+    ///
+    /// **形状契约（不许破坏既有端点）**：
+    /// - `multimodal == false` **或** 本条没有图 → `content` 保持**字符串**（与加多模态之前逐字节一致）；
+    /// - 只有「开了多模态 **且** 本条有图」才把 `content` 换成 parts 数组：
+    ///   文本段（非空才放）+ 每张图一个 `{type:"image_url",image_url:{url:"data:…"}}`。
+    ///   文本为空时 parts 里可以只有图（部分端点拒空 text 段）。
+    pub fn to_value(&self, multimodal: bool) -> Value {
         let mut m = serde_json::Map::new();
         m.insert("role".into(), Value::String(self.role.clone()));
-        // assistant 恒有 content：reasoning-only 轮用空串（v4 网关拒 null，空串安全）
-        if self.role == "assistant" {
+        if multimodal && !self.images.is_empty() {
+            let mut parts: Vec<Value> = Vec::new();
+            let text = self.content.clone().unwrap_or_default();
+            if !text.is_empty() {
+                parts.push(json!({ "type": "text", "text": text }));
+            }
+            for url in &self.images {
+                parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+            }
+            m.insert("content".into(), Value::Array(parts));
+        } else if self.role == "assistant" {
+            // assistant 恒有 content：reasoning-only 轮用空串（v4 网关拒 null，空串安全）
             m.insert(
                 "content".into(),
                 Value::String(self.content.clone().unwrap_or_default()),
@@ -305,5 +334,59 @@ pub fn trim_history(msgs: &mut Vec<Msg>, budget: usize) {
                 msgs.remove(i);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 形状契约（2026-10-11 多模态）：**没图 / 未开多模态时，请求体里这条消息必须
+    /// 和加多模态之前逐字节一致**（content 是字符串，没有多余字段）。
+    #[test]
+    fn text_shape_unchanged_when_blind() {
+        let m = Msg::user_with_images("看图", vec!["data:image/png;base64,AAA".into()]);
+        let v = m.to_value(false); // 开关关
+        assert_eq!(v["content"], serde_json::json!("看图"), "关开关时必须是字符串形状");
+        assert_eq!(v.as_object().unwrap().len(), 2, "只有 role + content");
+
+        let plain = Msg::user("没有图");
+        let v2 = plain.to_value(true); // 开关开但没图
+        assert_eq!(v2["content"], serde_json::json!("没有图"), "没图时也必须保持字符串形状");
+        assert_eq!(v2.as_object().unwrap().len(), 2);
+    }
+
+    /// 开了多模态且有图：content 变 parts 数组（文本段在前，图在后）。
+    #[test]
+    fn parts_array_when_multimodal() {
+        let m = Msg::user_with_images("看图", vec!["data:image/png;base64,AAA".into()]);
+        let v = m.to_value(true);
+        let parts = v["content"].as_array().expect("content 应是数组");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "看图");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AAA");
+    }
+
+    /// 空文本 + 有图：parts 里只放图（部分端点拒空 text 段）。
+    #[test]
+    fn parts_array_without_empty_text_part() {
+        let m = Msg::user_with_images("", vec!["data:image/png;base64,AAA".into()]);
+        let parts = m.to_value(true)["content"].as_array().cloned().unwrap_or_default();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "image_url");
+    }
+
+    /// 图片绝不落盘（否则 base64 会顶爆 1.2MB 的 storage blob 并把历史挤掉）。
+    #[test]
+    fn images_are_not_persisted() {
+        let m = Msg::user_with_images("看图", vec!["data:image/png;base64,".to_string() + &"A".repeat(5000)]);
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(!s.contains("data:image"), "序列化里不该出现图片");
+        // 反序列化：坏 JSON 里的 images 字段被忽略（历史导入不得注入任意 data URL）
+        let back: Msg = serde_json::from_str(r#"{"role":"user","content":"hi","images":["data:image/png;base64,ZZZ"]}"#).unwrap();
+        assert!(back.images.is_empty(), "反序列化应忽略 images");
+        assert_eq!(back.content.as_deref(), Some("hi"));
     }
 }

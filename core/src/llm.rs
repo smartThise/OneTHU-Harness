@@ -136,11 +136,14 @@ pub fn chat_turn(
         }
     }
     let url = format!("{}/chat/completions", cfg.base_url);
+    // 多模态（2026-10-11）：只有「开关开 + 这条消息带图」时 content 才变 parts 数组；
+    // 其余情况与加多模态之前完全一致（形状契约见 session::Msg::to_value 注释）。
     let mut body = json!({
         "model": cfg.model,
-        "messages": messages.iter().map(|m| m.to_value()).collect::<Vec<_>>(),
+        "messages": messages.iter().map(|m| m.to_value(cfg.multimodal)).collect::<Vec<_>>(),
         "stream": cfg.stream,
     });
+    let img_n: usize = if cfg.multimodal { messages.iter().map(|m| m.images.len()).sum() } else { 0 };
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.to_vec());
         body["tool_choice"] = json!("auto");
@@ -150,11 +153,12 @@ pub fn chat_turn(
     }
     cfg.apply_thinking(&mut body);
     (hooks.on_log)(&format!(
-        "→ LLM 请求 {} · msgs={} · stream={} · thinking={} · {}",
+        "→ LLM 请求 {} · msgs={} · stream={} · thinking={} · imgs={} · {}",
         cfg.model,
         messages.len(),
         cfg.stream,
         body.get("thinking").map(|t| t.to_string()).unwrap_or_else(|| "default".into()),
+        img_n,
         url
     ));
     let t0 = std::time::Instant::now();

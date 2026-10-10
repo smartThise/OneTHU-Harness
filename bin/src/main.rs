@@ -2,7 +2,7 @@
 //! JSON-RPC over stdin/stdout。核心逻辑全在 onethu-harness-core（R1）。
 
 use incoming::Incoming;
-use onethu_harness_core::{activate_commands, dispatch, host::{StdioEmit, StdioHost}, Host};
+use onethu_harness_core::{activate_commands, dispatch_run, host::{StdioEmit, StdioHost}, Host};
 
 /// 从 core 重新导出，保持 use 树干净
 mod incoming {
@@ -45,7 +45,8 @@ fn main() {
                 }
                 "run" => {
                     let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let input = params.get("input").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    // command/input/attachments 的解析统一在 core::dispatch_run（只此一处）；
+                    // 这里只留 command 给 chat 串行护栏杆用。
                     // R9 关键教训：主循环绝不能 inline dispatch——chat 一跑几十秒，
                     // 后续 run（新会话/历史/导入导出/打断后重试）全部排在队尾形同死键
                     //（此前「控制快速路」要在主循环读到请求后才生效，而主循环恰恰被 chat 占死；
@@ -91,7 +92,7 @@ fn main() {
                         if cmd == "chat" {
                             bh.reset_interrupt();
                         }
-                        let result = dispatch(&mut bh, &StdioEmit, &cmd, &input);
+                        let result = dispatch_run(&mut bh, &StdioEmit, &params);
                         if cmd == "chat" {
                             // 只有自己的代次仍是最新时才清护栏——被接管的僵尸线程醒来不得误清新对话的锁
                             if CHAT_GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen {

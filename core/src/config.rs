@@ -22,6 +22,11 @@ pub struct Config {
     pub model: String,
     /// 思考模式：off=不开；on=DeepSeek 系自动切 reasoner 变体；其他端尽力而为
     pub thinking: bool,
+    /// 多模态开关（设置 `multimodal` = on/off）：开 = 附件里的图片按图像模态
+    /// 直接进请求体（content 变 parts 数组）；关 = 图片只以文字说明带出。
+    /// 口径与 `thinking` 完全一致（on|true|1|开 为开，其余为关），默认关——
+    /// 端点不支持图像输入时也不会因为「默认开」把请求打坏。
+    pub multimodal: bool,
     /// 上下文预算（token 估算上限，超出裁剪历史）
     pub max_context: usize,
     /// SSE 流式输出
@@ -80,6 +85,9 @@ impl Config {
             if m.is_empty() { "deepseek-chat".into() } else { m }
         };
         let thinking = matches!(get("thinking").to_lowercase().as_str(), "on" | "true" | "1" | "开");
+        // 多模态开关（2026-10-11 用户点名需求）：口径**与 thinking 完全一致**——
+        // on|true|1|开 为开，其余（含设置缺失）为关。默认关 = 现状行为不变。
+        let multimodal = matches!(get("multimodal").to_lowercase().as_str(), "on" | "true" | "1" | "开");
         // MadModel 免费档（2026-09-19）：apiKey 未填且未显式 provider=custom 时，
         // 走 JS 泵注入的 madmodelToken（清华校园网 DeepSeek，见 state/madmodel.ts）。
         // token 缺失（校外首启泵还没跑通）→ api_key 留空，llm 层给出明确报错。
@@ -138,6 +146,7 @@ impl Config {
             base_url: base,
             model,
             thinking,
+            multimodal,
             max_context: get_num("maxContext", 24000.0).max(4000.0) as usize,
             stream: !matches!(get("stream").to_lowercase().as_str(), "off" | "false" | "0" | "关"),
             price_in,
@@ -387,5 +396,23 @@ mod tests {
         assert!(c.madmodel_ok, "中继通道就绪即视为可达");
         assert!(c.uses_free_tier);
         assert!(c.base_url.starts_with("http://127.0.0.1"));
+    }
+
+    /// 2026-10-11（用户点名需求）：多模态开关口径与 thinking 同款，**默认关**。
+    /// 默认关很关键——老用户升级后请求体形状必须与升级前逐字节一致。
+    #[test]
+    fn multimodal_switch_parsing() {
+        let m = base_map();
+        assert!(!Config::from_settings(&m).multimodal, "设置缺省必须是关");
+        for v in ["on", "ON", "true", "1", "开"] {
+            let mut m = base_map();
+            m.insert("multimodal".into(), json!(v));
+            assert!(Config::from_settings(&m).multimodal, "{v} 应解析为开");
+        }
+        for v in ["off", "false", "0", "关", "", "yes"] {
+            let mut m = base_map();
+            m.insert("multimodal".into(), json!(v));
+            assert!(!Config::from_settings(&m).multimodal, "{v} 应解析为关");
+        }
     }
 }

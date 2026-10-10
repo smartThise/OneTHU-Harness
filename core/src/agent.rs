@@ -8,6 +8,7 @@ use crate::llm::{self, Hooks};
 use crate::session::{self, Msg, PendingAction, Store};
 use crate::tools::{self, ToolOut, Ctx};
 use crate::usage::{self, Usage};
+use crate::Attachment;
 use serde_json::{json, Value};
 
 fn progress(emit: &dyn Emit, kind: &str, text: &str, payload: Option<Value>) {
@@ -120,8 +121,10 @@ fn total_usage_payload(store: &Store, cfg: &Config) -> Value {
     })
 }
 
-/// chat 命令主入口：返回 dock 约定的 JSON 结构
-pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
+/// chat 命令主入口：返回 dock 约定的 JSON 结构。
+/// `attachments` = run params 里的可选附件（见 crate::Attachment）；只有在
+/// **多模态开关打开**时其中的图片才会按图像模态进请求体，否则退化成文字说明。
+pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str, attachments: &[Attachment]) -> Value {
     // 设置每次取最新（R3：用户在管理页改完即生效）
     let settings: Value = match h.call("settings", "get", json!([])) {
         Ok(v) => v,
@@ -204,10 +207,19 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
     // ── 快照（LLM 失败可回滚，不污染历史）──
     let sess_id = store.active.clone();
     let snapshot: Vec<Msg> = store.sessions.iter().find(|s| s.id == sess_id).map(|s| s.messages.clone()).unwrap_or_default();
+    // ── 附件落地（2026-10-11 多模态开关）──
+    // 只有「开关开 + 图片 + 未超上限」才进 images（data URL）；其余一律拼成文字说明，
+    // 绝不静默丢件。图片**不落盘**（Msg.images 是 #[serde(skip)]），只活在本次 run 内。
+    let (input_text, images) = crate::split_attachments(input, attachments, cfg.multimodal);
+    let img_n = images.len();
     {
         let sess = store.sessions.iter_mut().find(|s| s.id == sess_id).unwrap();
-        sess.messages.push(Msg::user(input));
-        sess.trace.push(format!("👤 {}", input.chars().take(40).collect::<String>()));
+        sess.messages.push(Msg::user_with_images(&input_text, images));
+        sess.trace.push(if img_n > 0 {
+            format!("👤 {} · 🖼{} 张", input.chars().take(40).collect::<String>(), img_n)
+        } else {
+            format!("👤 {}", input.chars().take(40).collect::<String>())
+        });
         if sess.trace.len() > session::MAX_TRACE {
             let cut = sess.trace.len() - session::MAX_TRACE;
             sess.trace.drain(0..cut);
@@ -221,6 +233,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
         tool_calls: None,
         tool_call_id: None,
         name: None,
+        images: Vec::new(),
     };
     let tools_schema = tools::schema_with(&cfg.mcp_servers);
 
@@ -327,6 +340,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str) -> Value {
                 tool_calls: Some(Value::Array(tc_json)),
                 tool_call_id: None,
                 name: None,
+                images: Vec::new(),
             });
         }
 
@@ -570,7 +584,7 @@ pub fn selftest() -> Value {
     push(config::resolve_hhmm("下午2点半") == Some((14, 30)), "hhmm 下午2点半");
     push(config::date_choice("明天") == Ok(1), "dateChoice 明天=1");
     let mut msgs = vec![
-        Msg { role: "system".into(), content: Some("sys".repeat(10)), reasoning: None, tool_calls: None, tool_call_id: None, name: None },
+        Msg { role: "system".into(), content: Some("sys".repeat(10)), reasoning: None, tool_calls: None, tool_call_id: None, name: None, images: Vec::new() },
         Msg::user(&"长".repeat(500)),
         Msg::assistant(&"长".repeat(500)),
         Msg::user("最新问题"),
