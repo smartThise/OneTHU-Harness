@@ -122,8 +122,10 @@ pub fn chat_turn(
 ) -> Result<Turn, LlmError> {
     // MadModel 免费档预检（2026-09-19 兜底定案）：校外且无自费 Key → 不发请求，
     // 直接给出引导；免费档 token 尚未就位（泵首签还没完成）→ 提示稍候。
+    // 2026-10-12 修正：token 已就位时不再因「可达性标记为 0」提前拒绝——标记只来自探针，
+    // 校外 + webvpn 会话仍有效的情形应真实发一次请求，由下方 307/HTML 分类给出准确文案。
     if url_contains_madmodel(cfg) {
-        if !cfg.madmodel_ok {
+        if cfg.api_key.is_empty() && !cfg.madmodel_ok {
             return Err(LlmError {
                 message: "清华免费 DeepSeek 当前不可用：直连被校园网 IP 门禁拦截，且 webvpn 包装通道未就绪。\n                          · 在 OneTHU 里登录一次清华账号（建立 webvpn 会话后会自动走包装通道）；\n                          · 或连校园网/学校 VPN（EasyConnect）；\n                          · 或在 插件页 → OneTHU Harness → 设置 里切到「自费 API」。"
                     .into(),
