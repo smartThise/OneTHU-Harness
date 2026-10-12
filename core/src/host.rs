@@ -252,6 +252,18 @@ impl Host for StdioHost {
         bridge_call(&self.pending, &self.seq, ns, method, args)
     }
 
+    /// 短超时调用（ui_navigate 等即时性 UI 动作用）：stdio 侧尊重传入的窗口，
+    /// 超时立即回错误显形，而不是退化到 BRIDGE_TIMEOUT 长等。
+    fn call_timeout(
+        &mut self,
+        ns: &str,
+        method: &str,
+        args: Value,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        bridge_call_timeout(&self.pending, &self.seq, ns, method, args, timeout_ms)
+    }
+
     fn interrupted(&self) -> bool {
         self.interrupt.load(Ordering::SeqCst)
     }

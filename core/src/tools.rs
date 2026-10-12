@@ -45,6 +45,11 @@ fn friendly(e: String) -> String {
     }
 }
 
+/// 检索行路由表（**编译期资产**：plugins/OneTHU-Harness/assets/routes.json）。
+/// 由 tools/gen-oh-routes.mjs 从 apps/desktop/src/state/searchRows.ts（唯一真源）离线生成；
+/// 改动检索行后**必须重跑**该脚本，护栏 tools/oh-routes-sync-test.mjs 不一致会 exit 1（防脱同）。
+const ROUTES_JSON: &str = include_str!("../../assets/routes.json");
+
 fn s(v: &Value, k: &str) -> String {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
 }
@@ -717,6 +722,21 @@ pub fn all_tools() -> Vec<ToolDef> {
         name: "list_favorite_kinds",
         desc: "列出可收藏的原子种类（收藏夹体系）。需要收藏信息时先调用本工具查看可用的 kind。",
         params: json!({ "type": "object", "properties": {} }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ui_navigate",
+        desc: "检索行级直达（与检索条的搜索结果同一条链）：给出 routeId（路由表 ui_route_table 的 id）或 query（自然语言关键词，如 多模态 / 管理主题 / 音色 / 桌面小组件）。唯一命中 → 真实跳转到那一行（正确的页面 / OH 档位 / 插件视图，滚动并高亮那一行）；结果返回 {ok, target, breadcrumb}。查无或多个可能 → 返回 {ok:false} 与候选，向用户复述并等待选择，绝不硬猜。",
+        params: p(json!({
+            "routeId": {"type": "string", "description": "路由表行的稳定 id（来自 ui_route_table 或 history）；给 routeId 时精确直达"},
+            "query": {"type": "string", "description": "关键词；与检索条同源匹配（标题/别名），例如「多模态」「管理主题」「音色」"}
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ui_route_table",
+        desc: "列出可直达的检索行（searchRows 注册表投影：id/标题/面包屑/档位视图）。用户想「打开/设置 XX」但不清楚具体行 id 时，先调本工具拿 id，再 ui_navigate 精确直达。",
+        params: p(json!({}), &[]),
         confirm: false,
     },
     ToolDef {
@@ -2278,6 +2298,80 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             let ok = host(ctx, "nav", "go", json!([s(args, "page"), params]))?;
             json!({ "navigated": ok })
         }
+        "ui_navigate" => {
+            let table = routes_assets();
+            if table.is_empty() {
+                return Ok(ToolOut::Text(pretty(&json!({
+                    "ok": false,
+                    "reason": "路由表不可用（routes.json 资产缺失/解析失败）。改动检索行后请重跑 tools/gen-oh-routes.mjs，或先用 open_page 兜底。"
+                }))));
+            }
+            let route_id = s(args, "routeId");
+            let q = s(args, "query").trim().to_string();
+            if route_id.is_empty() && q.is_empty() {
+                return Ok(ToolOut::Text(pretty(&json!({
+                    "ok": false,
+                    "reason": "缺 routeId 或 query。可先调 ui_route_table 拿行 id，或用关键词（如 多模态 / 管理主题 / 音色）重试。"
+                }))));
+            }
+            let (hit, candidates, reason) = match_route(&table, &route_id, &q);
+            let row = match hit {
+                Some(r) => r,
+                None => {
+                    return Ok(ToolOut::Text(pretty(&json!({
+                        "ok": false,
+                        "reason": reason,
+                        "candidates": candidates
+                    }))));
+                }
+            };
+            let rid = s(&row, "id");
+            // 经宿主门面真跳转：TS nav.searchRow → goSearchRow ——**与检索条点行同一条链**（家族→档位/视图→行。
+            // 1.8s 短超时：本体退后台/挂起时立刻显形，绝不挂等 60s。
+            let res = ctx.h.call_timeout("nav", "searchRow", json!([{ "routeId": rid }]), 1800);
+            let out = match res {
+                Ok(v) => {
+                    let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(true);
+                    let note = s(&v, "note");
+                    json!({
+                        "ok": ok,
+                        "target": s(&row, "title"),
+                        "breadcrumb": v.get("breadcrumb").cloned().unwrap_or(json!([])),
+                        "landedOn": s(&v, "landedOn"),
+                        "reason": if ok && !note.is_empty() { format!("跳到了分节根：{note}") } else if ok { String::new() } else { "宿主拒绝执行（权限/未知行）".to_string() },
+                    })
+                }
+                Err(e) => {
+                    json!({
+                        "ok": false,
+                        "target": s(&row, "title"),
+                        "reason": format!("已定位到「{}」（{}）检索行，但本体界面未应答（应用可能退到后台或已退出）——请回到 OneTHU 前台再说一次：{}", s(&row, "title"), rid, e)
+                    })
+                }
+            };
+            out
+        }
+        "ui_route_table" => {
+            let table = routes_assets();
+            if table.is_empty() {
+                return Err("路由表不可用（assets/routes.json 缺失；改动 searchRows 后请重跑 tools/gen-oh-routes.mjs）。".into());
+            }
+            json!({
+                "rows": table
+                    .iter()
+                    .map(|r| json!({
+                        "id": s(r, "id"),
+                        "title": s(r, "title"),
+                        "kind": s(r, "kind"),
+                        "tier": s(r, "tier"),
+                        "view": s(r, "view"),
+                        "tab": s(r, "tab"),
+                        "section": s(r, "section")
+                    }))
+                    .collect::<Vec<_>>(),
+                "note": "用 ui_navigate {routeId} 直达；行 id 稳定，但若 UI 改版仍以 ui_route_table 的最新清单为准"
+            })
+        }
         "open_page" => {
             let q = s(args, "query");
             let q = q.trim().to_string();
@@ -2343,6 +2437,59 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         other => return Err(format!("未知工具：{other}")),
     };
     Ok(ToolOut::Text(pretty(&out)))
+}
+
+/// 解析编译期路由资产（routes.json：tools/gen-oh-routes.mjs 由 searchRows 唯一真源生成）。
+/// 每次现取一次：文件小；解析失败返回空表，调用方能给出明确的用户可读错误。
+fn routes_assets() -> Vec<Value> {
+    serde_json::from_str::<Value>(ROUTES_JSON)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// 本地路由表匹配（webview 不在场也能先**匹配出结论**）：
+///   routeId 非空 → 精确 id；
+///   query → 标题包含（去空格；中文无大小写）优先 → 别名等值/包含；
+/// 返回 (命中行, 候选, 不可行原因)。命中唯一才算 hit，多义如实回候选不硬猜。
+fn match_route(table: &[Value], route_id: &str, q: &str) -> (Option<Value>, Vec<Value>, String) {
+    if !route_id.is_empty() {
+        if let Some(v) = table.iter().find(|r| s(r, "id") == route_id) {
+            return (Some(v.clone()), Vec::new(), String::new());
+        }
+        return (None, Vec::new(), format!("没有 id 为「{route_id}」的检索行；可先调 ui_route_table 查看全部行 id"));
+    }
+    let m = q.to_lowercase().replace(' ', "");
+    let mut hits: Vec<Value> = table
+        .iter()
+        .filter(|r| s(r, "title").to_lowercase().replace(' ', "").contains(&m))
+        .cloned()
+        .collect();
+    if hits.is_empty() {
+        hits = table
+            .iter()
+            .filter(|r| {
+                let als = r.get("aliases").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+                als.iter().any(|a| {
+                    let ax = a.as_str().unwrap_or("").to_lowercase().replace(' ', "");
+                    ax == m || ax.contains(&m)
+                })
+            })
+            .cloned()
+            .collect();
+    }
+    if hits.is_empty() {
+        (None, Vec::new(), format!("路由表里没有「{q}」可以命中的检索行；可调 ui_route_table 看全部，或换个说法再试"))
+    } else if hits.len() == 1 {
+        (hits.first().cloned(), Vec::new(), String::new())
+    } else {
+        let candidates = hits
+            .iter()
+            .take(6)
+            .map(|r| json!({ "id": s(r, "id"), "title": s(r, "title") }))
+            .collect();
+        (None, candidates, format!("「{q}」有 {} 个可能的检索行，请让用户选一个后再用 routeId 精确直达", hits.len()))
+    }
 }
 
 /// 本地原子缓存未命中时的服务目录兜底：

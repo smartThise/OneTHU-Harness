@@ -1,0 +1,986 @@
+[
+  {
+    "id": "oh-madmodel",
+    "title": "MadModel 免费档",
+    "desc": "额度不足或过期时点重新签一次",
+    "aliases": [
+      "免费额度",
+      "额度",
+      "重新签",
+      "token"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "免费额度",
+      "MadModel 免费档"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "免费额度",
+    "note": ""
+  },
+  {
+    "id": "oh-multimodal",
+    "title": "OH 模型 / 多模态开关",
+    "desc": "模型来源、Key、模型名与多模态（图片输入）",
+    "aliases": [
+      "多模态",
+      "图片输入",
+      "模型",
+      "provider",
+      "apiKey",
+      "baseUrl",
+      "maxContext",
+      "stream"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "模型与多模态",
+      "OH 模型 / 多模态开关"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "模型与多模态",
+    "note": ""
+  },
+  {
+    "id": "oh-keepalive",
+    "title": "后台保活（华为 / 荣耀）",
+    "desc": "应用启动管理设手动管理并允许自启动/关联启动/后台活动",
+    "aliases": [
+      "保活",
+      "自启动",
+      "电池优化",
+      "后台"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "保活",
+      "后台保活（华为 / 荣耀）"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "保活",
+    "note": ""
+  },
+  {
+    "id": "oh-adv-plugins",
+    "title": "模型 / 配额预算 / MCP / 命令与日志 / 权限",
+    "desc": "插件自己的面板，就地渲染",
+    "aliases": [
+      "MCP",
+      "配额",
+      "预算",
+      "日志",
+      "权限",
+      "命令"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "高级配置",
+      "模型 / MCP / 日志",
+      "模型 / 配额预算 / MCP / 命令与日志 / 权限"
+    ],
+    "kind": "oh",
+    "tier": "advanced",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "模型 / MCP / 日志",
+    "note": ""
+  },
+  {
+    "id": "voice-engine",
+    "title": "引擎状态",
+    "desc": "当前平台是否支持语音合成 / 重新检查",
+    "aliases": [
+      "语音引擎",
+      "重新检查",
+      "试听"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "语音",
+      "引擎状态"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "语音",
+    "note": ""
+  },
+  {
+    "id": "voice-tone",
+    "title": "音色",
+    "desc": "系统引擎报出的可选嗓音",
+    "aliases": [
+      "嗓音",
+      "普通话"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "语音",
+      "音色"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "语音",
+    "note": ""
+  },
+  {
+    "id": "voice-rate",
+    "title": "语速",
+    "desc": "朗读快慢",
+    "aliases": [
+      "速度"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "语音",
+      "语速"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "语音",
+    "note": ""
+  },
+  {
+    "id": "voice-pitch",
+    "title": "音高",
+    "desc": "朗读高低",
+    "aliases": [
+      "音调"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "语音",
+      "音高"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "语音",
+    "note": ""
+  },
+  {
+    "id": "overlay-on",
+    "title": "开启悬浮球",
+    "desc": "浮在其他应用上层的 OH 球；需要悬浮窗权限",
+    "aliases": [
+      "悬浮球",
+      "浮窗",
+      "overlay",
+      "权限"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "悬浮球",
+      "开启悬浮球"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "悬浮球",
+    "note": "当前平台不支持在其他应用上层显示悬浮球（仅安卓可用）；已带到 OH「悬浮球」分节。"
+  },
+  {
+    "id": "im-qr",
+    "title": "扫码创建应用（推荐，免手工配置）",
+    "desc": "扫码创建飞书应用并自动绑定",
+    "aliases": [
+      "扫码",
+      "IM",
+      "飞书"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "IM 基础（扫码绑定 / 解绑）",
+      "扫码创建应用（推荐，免手工配置）"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 基础（扫码绑定 / 解绑）",
+    "note": ""
+  },
+  {
+    "id": "im-owner",
+    "title": "绑定主人",
+    "desc": "生成绑定码 / 解除绑定",
+    "aliases": [
+      "绑定码",
+      "解绑"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "IM 基础（扫码绑定 / 解绑）",
+      "绑定主人"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 基础（扫码绑定 / 解绑）",
+    "note": ""
+  },
+  {
+    "id": "im-wechat",
+    "title": "微信（iLink 官方 Bot · 扫码即用）",
+    "desc": "微信扫码绑定 / 重新扫码 / 解除绑定",
+    "aliases": [
+      "微信",
+      "iLink"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "IM 基础（扫码绑定 / 解绑）",
+      "微信（iLink 官方 Bot · 扫码即用）"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 基础（扫码绑定 / 解绑）",
+    "note": ""
+  },
+  {
+    "id": "im-status",
+    "title": "连接状态",
+    "desc": "通道连接状态",
+    "aliases": [
+      "IM 状态"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "IM 基础（扫码绑定 / 解绑）",
+      "连接状态"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 基础（扫码绑定 / 解绑）",
+    "note": ""
+  },
+  {
+    "id": "im-feishu",
+    "title": "飞书 bot（P0 通道）",
+    "desc": "长连接事件订阅",
+    "aliases": [
+      "飞书通道"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "高级配置",
+      "IM 通道（进阶）",
+      "飞书 bot（P0 通道）"
+    ],
+    "kind": "oh",
+    "tier": "advanced",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 通道（进阶）",
+    "note": ""
+  },
+  {
+    "id": "im-creds",
+    "title": "应用凭据（手工）",
+    "desc": "手工填飞书应用凭据",
+    "aliases": [
+      "App ID",
+      "App Secret"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "高级配置",
+      "IM 通道（进阶）",
+      "应用凭据（手工）"
+    ],
+    "kind": "oh",
+    "tier": "advanced",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "IM 通道（进阶）",
+    "note": ""
+  },
+  {
+    "id": "widget-main",
+    "title": "桌面小组件",
+    "desc": "添加到桌面的 OneTHU 小组件与内容设置",
+    "aliases": [
+      "小组件",
+      "widget",
+      "桌面组件"
+    ],
+    "breadcrumb": [
+      "设置",
+      "桌面小组件",
+      "桌面小组件",
+      "桌面小组件"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "桌面小组件",
+    "section": "桌面小组件",
+    "note": ""
+  },
+  {
+    "id": "widget-slots",
+    "title": "小组件槽位",
+    "desc": "选择每个槽位显示哪块插件小组件",
+    "aliases": [
+      "槽位",
+      "插件小组件"
+    ],
+    "breadcrumb": [
+      "设置",
+      "桌面小组件",
+      "桌面小组件",
+      "小组件槽位"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "桌面小组件",
+    "section": "桌面小组件",
+    "note": ""
+  },
+  {
+    "id": "set-theme-board",
+    "title": "主题",
+    "desc": "只列已启用主题，点「应用」切换",
+    "aliases": [
+      "换主题",
+      "配色",
+      "主题板",
+      "暗色",
+      "夜间"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "主题",
+      "主题"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "主题",
+    "note": ""
+  },
+  {
+    "id": "set-theme-install",
+    "title": "安装主题",
+    "desc": "打开插件市场的主题筛选",
+    "aliases": [
+      "主题市场",
+      "装主题"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "主题",
+      "安装主题"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "主题",
+    "note": ""
+  },
+  {
+    "id": "set-theme-manage",
+    "title": "管理主题",
+    "desc": "主题插件的启用 / 停用",
+    "aliases": [
+      "启用主题",
+      "停用主题"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "主题",
+      "管理主题"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "主题",
+    "note": ""
+  },
+  {
+    "id": "set-theme-follow",
+    "title": "跟随系统昼夜",
+    "desc": "亮色用白天主题，深色用黑夜主题",
+    "aliases": [
+      "昼夜",
+      "白天主题",
+      "黑夜主题",
+      "自动切换"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "主题",
+      "跟随系统昼夜"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "主题",
+    "note": ""
+  },
+  {
+    "id": "set-appearance",
+    "title": "外观",
+    "desc": "密度、字号、圆角等外观项",
+    "aliases": [
+      "密度",
+      "字号",
+      "圆角"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "外观"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-home-layout",
+    "title": "首页布局",
+    "desc": "首页卡片显隐与排序",
+    "aliases": [
+      "首页",
+      "卡片顺序"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "首页布局",
+      "首页布局"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "首页布局",
+    "note": ""
+  },
+  {
+    "id": "set-favs",
+    "title": "收藏夹",
+    "desc": "收藏夹管理与导入导出",
+    "aliases": [
+      "收藏",
+      "导入收藏",
+      "导出收藏"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "收藏夹",
+      "收藏夹"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "收藏夹",
+    "note": ""
+  },
+  {
+    "id": "set-cloud",
+    "title": "云同步",
+    "desc": "云盘同步与恢复",
+    "aliases": [
+      "同步",
+      "云盘同步",
+      "备份"
+    ],
+    "breadcrumb": [
+      "设置",
+      "数据与同步",
+      "云同步",
+      "云同步"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "数据与同步",
+    "section": "云同步",
+    "note": ""
+  },
+  {
+    "id": "set-exthw",
+    "title": "外部作业源",
+    "desc": "外部作业源登录与刷新",
+    "aliases": [
+      "作业源",
+      "OJ",
+      "课件"
+    ],
+    "breadcrumb": [
+      "设置",
+      "数据与同步",
+      "外部作业源",
+      "外部作业源"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "数据与同步",
+    "section": "外部作业源",
+    "note": ""
+  },
+  {
+    "id": "set-download",
+    "title": "下载",
+    "desc": "下载目录与缓存清理",
+    "aliases": [
+      "存储",
+      "缓存",
+      "清理"
+    ],
+    "breadcrumb": [
+      "设置",
+      "下载与存储",
+      "下载",
+      "下载"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "下载与存储",
+    "section": "下载",
+    "note": ""
+  },
+  {
+    "id": "set-notify",
+    "title": "通知",
+    "desc": "通知与提醒设置",
+    "aliases": [
+      "提醒",
+      "推送"
+    ],
+    "breadcrumb": [
+      "设置",
+      "通知与提醒",
+      "通知",
+      "通知"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "通知与提醒",
+    "section": "通知",
+    "note": ""
+  },
+  {
+    "id": "set-account",
+    "title": "账号与绑定",
+    "desc": "清华账号登录与绑定",
+    "aliases": [
+      "登录",
+      "学号",
+      "绑定"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "账号与绑定",
+      "账号与绑定"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "账号与绑定",
+    "note": ""
+  },
+  {
+    "id": "set-security",
+    "title": "安全",
+    "desc": "记住的密码与安全项",
+    "aliases": [
+      "密码",
+      "记住密码"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "安全",
+      "安全"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "安全",
+    "note": ""
+  },
+  {
+    "id": "set-about",
+    "title": "关于",
+    "desc": "版本、更新与开源信息",
+    "aliases": [
+      "版本",
+      "更新",
+      "开源"
+    ],
+    "breadcrumb": [
+      "设置",
+      "关于",
+      "关于",
+      "关于"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "关于",
+    "section": "关于",
+    "note": ""
+  },
+  {
+    "id": "set-account-row",
+    "title": "账户",
+    "desc": "当前登录状态与退出",
+    "aliases": [
+      "已登录",
+      "退出登录"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "账户",
+      "账户"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "账户",
+    "note": ""
+  },
+  {
+    "id": "set-saved-pwd",
+    "title": "记住的密码",
+    "desc": "本机保存的登录密码（可清除）",
+    "aliases": [
+      "保存密码",
+      "清除密码"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "安全",
+      "记住的密码"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "安全",
+    "note": ""
+  },
+  {
+    "id": "set-tab-manage",
+    "title": "管理栏目",
+    "desc": "设置栏目的显隐与排序",
+    "aliases": [
+      "栏目显隐",
+      "页签排序"
+    ],
+    "breadcrumb": [
+      "设置",
+      "关于",
+      "关于",
+      "管理栏目"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "关于",
+    "section": "关于",
+    "note": ""
+  },
+  {
+    "id": "set-tour",
+    "title": "导览",
+    "desc": "重新运行首次使用引导",
+    "aliases": [
+      "重新运行引导",
+      "新手引导"
+    ],
+    "breadcrumb": [
+      "设置",
+      "关于",
+      "关于",
+      "导览"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "关于",
+    "section": "关于",
+    "note": ""
+  },
+  {
+    "id": "set-update",
+    "title": "检查 OneTHU 更新",
+    "desc": "检查应用本体更新",
+    "aliases": [
+      "本体更新",
+      "版本更新"
+    ],
+    "breadcrumb": [
+      "设置",
+      "关于",
+      "关于",
+      "检查 OneTHU 更新"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "关于",
+    "section": "关于",
+    "note": ""
+  },
+  {
+    "id": "set-cloud-reconnect",
+    "title": "云盘重连",
+    "desc": "云盘连接失效时一键重连",
+    "aliases": [
+      "重新连接云盘",
+      "token"
+    ],
+    "breadcrumb": [
+      "设置",
+      "数据与同步",
+      "云同步",
+      "云盘重连"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "数据与同步",
+    "section": "云同步",
+    "note": "云盘连接出问题在「日程云同步」那张卡上重试/重新授权；当前没有独立的「云盘重连」按钮（连接正常时用不上），已带到「云同步」分节。"
+  },
+  {
+    "id": "set-exthw-creds",
+    "title": "外部作业源登录",
+    "desc": "外部作业源账号登录与刷新",
+    "aliases": [
+      "作业源凭据",
+      "OJ 登录"
+    ],
+    "breadcrumb": [
+      "设置",
+      "数据与同步",
+      "外部作业源",
+      "外部作业源登录"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "数据与同步",
+    "section": "外部作业源",
+    "note": "登录入口按作业源分卡：OJ 类收在「OJ 平台登录」折叠卡里，雨课堂等各卡有自己的登录入口；已带到「外部作业源」分节。"
+  },
+  {
+    "id": "set-dl-dir",
+    "title": "下载目录 / 缓存清理",
+    "desc": "下载目录位置与缓存清理",
+    "aliases": [
+      "缓存",
+      "存储占用",
+      "清理"
+    ],
+    "breadcrumb": [
+      "设置",
+      "下载与存储",
+      "下载",
+      "下载目录 / 缓存清理"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "下载与存储",
+    "section": "下载",
+    "note": "下载目录=「下载位置」一行；缓存/诊断在「运行日志」「诊断摘要」行——已带到「下载」分节。"
+  },
+  {
+    "id": "set-help",
+    "title": "帮助",
+    "desc": "常用任务与引导",
+    "aliases": [
+      "教程",
+      "导览"
+    ],
+    "breadcrumb": [
+      "设置",
+      "帮助",
+      "帮助",
+      "帮助"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "帮助",
+    "section": "帮助",
+    "note": ""
+  },
+  {
+    "id": "plg-check-update",
+    "title": "检查更新",
+    "desc": "从插件本体仓库检查最新版",
+    "aliases": [
+      "更新",
+      "检查新版本"
+    ],
+    "breadcrumb": [
+      "插件",
+      "我的插件",
+      "检查更新"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "mine",
+    "tab": "插件",
+    "section": "我的插件",
+    "note": "「检查更新」按钮在每个来自仓库的插件卡上；当前列表没有这类卡，已带到「我的插件」视图。"
+  },
+  {
+    "id": "plg-switch-theme",
+    "title": "去切换主题",
+    "desc": "到「外观与布局 → 主题」切换（会高亮那一节）",
+    "aliases": [
+      "切换主题",
+      "换主题"
+    ],
+    "breadcrumb": [
+      "插件",
+      "我的插件",
+      "去切换主题"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "mine",
+    "tab": "插件",
+    "section": "我的插件",
+    "note": ""
+  },
+  {
+    "id": "plg-detail",
+    "title": "详情",
+    "desc": "查看插件详情（简介图 + 详情正文）",
+    "aliases": [
+      "插件详情",
+      "简介图",
+      "readme"
+    ],
+    "breadcrumb": [
+      "插件",
+      "插件市场",
+      "详情"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "market",
+    "tab": "插件",
+    "section": "插件市场",
+    "note": ""
+  },
+  {
+    "id": "plg-mine-market",
+    "title": "我的插件 / 插件市场",
+    "desc": "插件页两个视图切换",
+    "aliases": [
+      "插件列表",
+      "插件市场"
+    ],
+    "breadcrumb": [
+      "插件",
+      "我的插件",
+      "我的插件 / 插件市场"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "mine",
+    "tab": "插件",
+    "section": "我的插件",
+    "note": ""
+  },
+  {
+    "id": "plg-install",
+    "title": "安装插件",
+    "desc": "从仓库 / 市场安装插件",
+    "aliases": [
+      "装插件",
+      "从仓库安装"
+    ],
+    "breadcrumb": [
+      "插件",
+      "我的插件",
+      "安装插件"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "mine",
+    "tab": "插件",
+    "section": "我的插件",
+    "note": ""
+  }
+]

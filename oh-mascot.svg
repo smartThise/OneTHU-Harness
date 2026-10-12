@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="500" viewBox="120 90 480 400" role="img" aria-labelledby="title description">
+  <title id="title">OH — OneTHU Harness mascot</title>
+  <desc id="description">A minimal OH mascot: a square rounded OH body with short curved arm and leg lines, ending without hands or boots.</desc>
+
+  <!-- Short, single-stroke limbs. -->
+  <g fill="none" stroke="#171717" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M232 205 C212 202 199 191 187 184 C180 181 176 182 173 182"/>
+    <path d="M488 205 C508 202 521 191 533 184 C540 181 544 182 547 182"/>
+    <path d="M314 380 C310 398 302 415 294 430"/>
+    <path d="M406 380 C410 398 418 415 426 430"/>
+  </g>
+
+  <!-- Plain rounded-rectangle body with the original mixed-type (OH) mark. -->
+  <rect x="230" y="120" width="260" height="260" rx="54" fill="#fff" stroke="#171717" stroke-width="3.5"/>
+  <text x="360" y="292" text-anchor="middle" fill="#151515">
+    <tspan font-family="Menlo, Consolas, 'Courier New', monospace" font-size="75" font-weight="400">(</tspan><tspan font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="600">O</tspan><tspan font-family="-apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif" font-size="76" font-weight="800" dx="3">H</tspan><tspan font-family="Menlo, Consolas, 'Courier New', monospace" font-size="75" font-weight="400" dx="3">)</tspan>
+  </text>
+
+</svg>
