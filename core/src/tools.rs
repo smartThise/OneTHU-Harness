@@ -1112,6 +1112,43 @@ pub fn all_tools() -> Vec<ToolDef> {
         params: p(json!({ "id": { "type": "string" } }), &["id"]),
         confirm: true,
     },
+    /* ── 极客模式：浏览器探索（桌面 Only；带登录态的独立 profile）── */
+    ToolDef {
+        name: "geek_status",
+        desc: "极客模式（浏览器探索）只读探测：本机有哪些可用浏览器、playwright 版本是否已下载、独立登录态 profile 是否已存在、探索会话是否在运行。手机端恒报不开放。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "geek_launch",
+        desc: "启动探索浏览器（需要先向用户确认；桌面 Only）：mode 选 \"system\"（本机 Chrome/Chromium/Edge，无则报错）或 \"playwright\"（设置里一键下载的探索专用浏览器）。用**独立 profile**——可带出你登录过的各类网站会话，与主程序与日常浏览器互不干扰。返回调试端口供后续 browse_navigate/eval。",
+        params: p(json!({ "mode": { "type": "string", "description": "system | playwright" } }), &["mode"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "geek_navigate",
+        desc: "探索浏览器打开一个网页（需要先向用户确认）：访问、观察、把页面结构爬回来。写操作网站的行为仍要用户自己点——浏览器是真人操作视角，你只负责把页面读回来。",
+        params: p(json!({ "url": { "type": "string", "description": "完整 http(s) 网址" } }), &["url"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "geek_read",
+        desc: "把探索浏览器当前页读回来（只读）：返回标题/地址/正文纯文本（≤8000 字）与可交互元素清单（button/link/input 的文字与选择器）。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "geek_eval",
+        desc: "在探索浏览器当前页执行一段 JavaScript（需要先向用户确认；风险自负级——只读查询请优先 geek_read）。表达式返回值序列化回来。",
+        params: p(json!({ "js": { "type": "string", "description": "一段 JS 表达式（不是语句块也行）" } }), &["js"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "geek_close",
+        desc: "关闭探索浏览器（需要先向用户确认）。登录态保存在磁盘 profile 里，下次启动不用重登。",
+        params: p(json!({}), &[]),
+        confirm: true,
+    },
     /* ── 自进化出口：发布（2026-10-13 用户点名「一键提 GitHub + 市场名单 PR」）── */
     ToolDef {
         name: "pub_check",
@@ -1206,6 +1243,21 @@ pub fn is_confirm(name: &str) -> bool {
 /// 两段式确认的确认摘要（把对象解析好再给用户看）
 fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, String> {
     match name {
+        "geek_launch" => {
+            Ok(format!(
+                "启动极客模式探索浏览器（{}）：独立登录态 profile、远程调试口开放在本机；可探索你授权的网站并读回页面内容；风险与边界以设置页说明为准",
+                if s(args, "mode") == "playwright" { "playwright 下载版" } else { "本机浏览器" }
+            ))
+        }
+        "geek_navigate" => {
+            Ok(format!("在探索浏览器里打开 {}", s(args, "url")))
+        }
+        "geek_eval" => {
+            Ok("在探索浏览器当前页执行一段 JavaScript（读回结果；请确信脚本无害再确认）".to_string())
+        }
+        "geek_close" => {
+            Ok("关闭探索浏览器（登录态保留在本机 profile）".to_string())
+        }
         "pub_plugin_github" => {
             Ok(format!(
                 "把本地插件目录「{}」发布到 GitHub 仓库 {}/{}（远端已存在=只推送；不存在且有 gh 登录=代建 public 仓库；push 的提交含该目录全部文件）",
@@ -2027,6 +2079,49 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     if name == "ext_plugin_uninstall" {
         host(ctx, "ext", "pluginUninstall", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text("插件已卸载删除。".into()));
+    }
+    /* ── 极客模式：浏览器探索（走门面 browser 命名空间，桌面 Only）── */
+    if name == "geek_status" {
+        let out = host(ctx, "browser", "probe", json!([]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
+    }
+    if name == "geek_launch" {
+        let out = host(ctx, "browser", "launch", json!([s(args, "mode")]))?;
+        return Ok(ToolOut::Text(format!(
+            "探索浏览器已就绪。{}（之后 geek_navigate 打页面、geek_read 读内容）",
+            if out.get("alreadyRunning").and_then(|v| v.as_bool()).unwrap_or(false) { "（之前启动的会话依旧有效，端口不变）" } else { "登录态在独立 profile，去各网站先登录一次即可" }
+        )));
+    }
+    if name == "geek_navigate" {
+        let url = s(args, "url");
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Ok(ToolOut::Text("url 要以 http:// 或 https:// 开头。".into()));
+        }
+        host(ctx, "browser", "navigate", json!([url]))?;
+        return Ok(ToolOut::Text("已打开。geek_read 可以读当前页。".into()));
+    }
+    if name == "geek_read" {
+        let out = host(ctx, "browser", "snapshot", json!([]))?;
+        let title = s(&out, "title");
+        let addr = s(&out, "url");
+        let text = s(&out, "text");
+        let mut shown = text.chars().take(8000).collect::<String>();
+        if shown.is_empty() {
+            shown = "（页面没有可读文本）".into();
+        }
+        let truncated = text.chars().count() > 8000;
+        return Ok(ToolOut::Text(format!(
+            "「{title}」{addr}\n\n{shown}{}",
+            if truncated { "…（已截断，geek_eval 抽指定信息）" } else { "" }
+        )));
+    }
+    if name == "geek_eval" {
+        let out = host(ctx, "browser", "eval", json!([s(args, "js")]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_else(|_| "（无返回值）".into())));
+    }
+    if name == "geek_close" {
+        host(ctx, "browser", "close", json!([]))?;
+        return Ok(ToolOut::Text("探索浏览器已关闭（登录态留存）。".into()));
     }
     /* ── 发布出口：调 crate::ghpublish（纯本机 git/gh + GitHub API） ── */
     if name == "pub_check" {
