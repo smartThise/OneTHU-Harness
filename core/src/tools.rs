@@ -924,6 +924,26 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: false,
     },
     ToolDef {
+        name: "ext_phone_push",
+        desc: "把几行文字推到**手机桌面小组件**（Android 首页卡片）：每次推送整体替换该槽位内容（≤8 行，每行 ≤40 字，副行 ≤60 字）。用户说「把今天待办放上手机桌面 / 手机小组件显示 XX」时用。rows 传空数组即清除、还原插件默认内容。App 在前台时会随下一次快照推送到原生。",
+        params: p(json!({
+            "title": { "type": "string", "description": "卡片标题（≤20 字）" },
+            "rows": {
+                "type": "array",
+                "description": "行数组，每行 {text: 主行, sub?: 副行}",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "主行文字" },
+                        "sub": { "type": "string", "description": "副行补充（可选）" }
+                    },
+                    "required": ["text"]
+                }
+            }
+        }), &["rows"]),
+        confirm: false,
+    },
+    ToolDef {
         name: "add_favorite",
         desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
         params: json!({
@@ -1513,6 +1533,20 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         ]))?;
         let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
         return Ok(ToolOut::Text(format!("组件已放到 OnePage（it={id}）。")));
+    }
+    if name == "ext_phone_push" {
+        let title = s(args, "title");
+        let rows = args.get("rows").cloned().unwrap_or(json!([]));
+        if !rows.is_array() {
+            return Ok(ToolOut::Text("rows 必须是数组（每行 {text, sub?}）；清空也传空数组。".into()));
+        }
+        let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
+        host(ctx, "ext", "phoneWidgetSet", json!([title, rows]))?;
+        return Ok(ToolOut::Text(if n == 0 {
+            "已清空手机小组件自定义内容（还原插件默认）。".into()
+        } else {
+            format!("已推 {n} 行到手机桌面小组件，App 下次进前台即生效。")
+        }));
     }
     if name == "add_favorite" {
         let title = s(args, "title");
