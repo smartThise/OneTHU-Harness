@@ -785,21 +785,13 @@ pub fn all_tools() -> Vec<ToolDef> {
     ToolDef {
         name: "ext_flow_run",
         desc: "立即运行一个 OneFlow（给 id，来自 ext_flow_list）。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": "string", "description": "id（来自对应 list 工具）" } }), &["id"]),
         confirm: false,
     },
     ToolDef {
         name: "ext_flow_delete",
         desc: "删除一个 OneFlow（需先向用户确认）。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": "string", "description": "id（来自对应 list 工具）" } }), &["id"]),
         confirm: true,
     },
     ToolDef {
@@ -829,21 +821,13 @@ pub fn all_tools() -> Vec<ToolDef> {
     ToolDef {
         name: "ext_tool_run",
         desc: "运行一个用户自定义工具（给 id，来自 ext_tool_list）。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": "string", "description": "id（来自对应 list 工具）" } }), &["id"]),
         confirm: false,
     },
     ToolDef {
         name: "ext_tool_delete",
         desc: "删除一个用户自定义工具（需先向用户确认）。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": "string", "description": "id（来自对应 list 工具）" } }), &["id"]),
         confirm: true,
     },
     ToolDef {
@@ -871,21 +855,13 @@ pub fn all_tools() -> Vec<ToolDef> {
     ToolDef {
         name: "ext_theme_activate",
         desc: "切换/停用用户主题：id 来自 ext_theme_list，传 null 恢复跟随系统主题。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": ["string", "null"], "description": "主题 id；null=恢复默认" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": ["string", "null"], "description": "主题 id；null=恢复默认" } }), &["id"]),
         confirm: false,
     },
     ToolDef {
         name: "ext_theme_delete",
         desc: "删除一个用户生成主题（需先向用户确认）。",
-        params: p(json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        }), &[]),
+        params: p(json!({ "id": { "type": "string", "description": "id（来自对应 list 工具）" } }), &["id"]),
         confirm: true,
     },
     ToolDef {
@@ -901,6 +877,50 @@ pub fn all_tools() -> Vec<ToolDef> {
             },
             "required": ["name", "html"]
         }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_widget_list",
+        desc: "列出全部用户生成组件（id/名字/创建时间）。管理或引用组件 id 前先查这里。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_widget_delete",
+        desc: "删除一个用户生成组件（需先向用户确认）：定义与其在首页白板/各 OnePage 上的实例一并清掉。",
+        params: p(json!({ "id": { "type": "string", "description": "组件 id（来自 ext_widget_list）" } }), &["id"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_onepage_create",
+        desc: "新建一块 OnePage（用户白板页）。用户说「帮我建个白板/页面」时用。",
+        params: p(json!({
+            "name": { "type": "string", "description": "OnePage 名字" },
+            "icon": { "type": "string", "description": "图标名（可选，默认 star）" }
+        }), &["name"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_onepage_list",
+        desc: "列出全部 OnePage（id/名字/类型）。往某块 OnePage 放组件前先查 id。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_onepage_add",
+        desc: "往一块 OnePage（用户白板）里放一个组件。kind 三选一：text（一段文字）、atom-link（引用一个已有原子，ref 格式 kind|key，可从收藏夹/原子目录取）、custom（用户生成组件 id，如 usergen:uw.xxx）。格子坐标 x/y 以手机 4 列为准，w/h 单位格。",
+        params: p(json!({
+            "boardId": { "type": "string", "description": "OnePage id（来自 ext_onepage_list）" },
+            "kind": { "type": "string", "description": "text | atom-link | custom" },
+            "payload": {
+                "type": "object",
+                "description": "随 kind 变：text 给 {text, variant?}；atom-link 给 {ref}；custom 给 {id}"
+            },
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "w": { "type": "number", "description": "格宽（默认 2）" },
+            "h": { "type": "number", "description": "格高（默认 1）" }
+        }), &["boardId", "kind"]),
         confirm: false,
     },
     ToolDef {
@@ -1431,6 +1451,68 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     if name == "ext_widget_create" {
         let out = host(ctx, "ext", "widgetCreate", json!([s(args, "name"), s(args, "html"), args.get("x").cloned(), args.get("y").cloned()]))?;
         return Ok(ToolOut::Text(format!("组件已放到首页白板：{}", out)));
+    }
+    if name == "ext_widget_list" {
+        let out = host(ctx, "ext", "widgetList", json!([]))?;
+        let rows: Vec<String> = out
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|w| {
+                        format!(
+                            "id={} {}",
+                            w.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            w.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if rows.is_empty() {
+            return Ok(ToolOut::Text("还没有用户生成组件。ext_widget_create 可以现场做一个。".into()));
+        }
+        return Ok(ToolOut::Text(rows.join("\n")));
+    }
+    if name == "ext_widget_delete" {
+        host(ctx, "ext", "widgetDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("组件已删除（白板上的实例一并清掉）。".into()));
+    }
+    if name == "ext_onepage_create" {
+        let out = host(ctx, "ext", "onePageCreate", json!([s(args, "name"), args.get("icon").cloned()]))?;
+        let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("OnePage 已创建（id={id}）。往里放组件用 ext_onepage_add。")));
+    }
+    if name == "ext_onepage_list" {
+        let out = host(ctx, "ext", "onePageList", json!([]))?;
+        let rows: Vec<String> = out
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|b| {
+                        format!(
+                            "id={} [{}] {}",
+                            b.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            b.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+                            b.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Ok(ToolOut::Text(rows.join("\n")));
+    }
+    if name == "ext_onepage_add" {
+        let out = host(ctx, "ext", "onePageAddItem", json!([
+            s(args, "boardId"),
+            s(args, "kind"),
+            args.get("payload").cloned().unwrap_or(json!({})),
+            args.get("x").cloned(),
+            args.get("y").cloned(),
+            args.get("w").cloned(),
+            args.get("h").cloned(),
+        ]))?;
+        let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("组件已放到 OnePage（it={id}）。")));
     }
     if name == "add_favorite" {
         let title = s(args, "title");
