@@ -337,9 +337,99 @@ pub fn trim_history(msgs: &mut Vec<Msg>, budget: usize) {
     }
 }
 
+/* ═══════════ 压缩内容制（2026-10-13 用户拍板：裁剪制 → 压缩内容制） ═══════════
+ *
+ * 旧 trim 是「丢历史」：被丢的结论、地址、id 全部蒸发，用户回头问就变失忆。
+ * 新机制分两级：
+ *   ① `compress_split`：在**配对安全边界**（user 消息的开头 / assistant 非工具轮的开头）
+ *      找切点，前缀 = 老的整轮（assistant/tool 配对完整），后缀 = 最近几轮原样保留；
+ *   ② 调用方（agent.rs）把前缀交给模型做一次事实压缩，替换成一条 `role=user` 的
+ *      「历史压缩」消息（模型对话等价于用户先前说过的话，后续轮可完整引用）。
+ * 压缩失败（模型挂了/摘要太空）回落 trim_history——机制永不比旧路更差。
+ */
+
+/// 压缩切点候选：role=user，或「assistant 且不带 tool_calls」（完整 assistant 轮的开头）。
+fn compress_boundary(m: &Msg) -> bool {
+    m.role == "user" || (m.role == "assistant" && m.tool_calls.is_none())
+}
+
+/// 在 [start..] 里找压缩切点：返回 msgs 下标 k，使 msgs[start..k] 前缀整体压缩；
+/// 取**最右**的边界（前缀尽量大 = 压一次赚最多、后缀尽量小 = 最近内容保留最久）。
+/// 前缀 token ≥ 预算的 55% 才算合格（太小压一回不划算）；全部太小 → None（回落裁剪）。
+pub fn compress_split(msgs: &[Msg], budget: usize) -> Option<usize> {
+    let sys_end = msgs.iter().position(|m| m.role != "system").unwrap_or(msgs.len());
+    if msgs.len() - sys_end < 6 {
+        return None; // 太短：压缩收益不足（保底 3 条之外还得有一轮工具往复）
+    }
+    let target_min = budget * 55 / 100;
+    let mut best: Option<usize> = None;
+    for k in (sys_end + 1)..msgs.len() {
+        if !compress_boundary(&msgs[k]) {
+            continue;
+        }
+        if history_tokens(&msgs[sys_end..k]) >= target_min {
+            best = Some(k); // 边界必须本身过线；不等价于「右一格也过线」，所以只记这一个
+        }
+    }
+    best
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /* ── 压缩内容制：切点找配对边界（agent.rs 负责真调用，这里测纯逻辑） ── */
+
+    fn long_history() -> Vec<Msg> {
+        // sys + 用户 + 助手(带 calls) + tool + 助手(收官) + 用户 + 助手(带 calls) + tool + 助手收官…
+        let mut v = vec![Msg { role: "system".into(), ..Msg::user("系统") }];
+        for i in 0..4 {
+            let filler = "x".repeat(600);
+            v.push(Msg::user(&format!("第 {i} 轮问话 {filler}")));
+            let mut m = Msg::user(&format!("助手目录定位 {i} {filler}"));
+            m.role = "assistant".into();
+            m.tool_calls = Some(json!([{ "id": "c1", "type": "function", "function": { "name": "t", "arguments": "{}" } }]));
+            v.push(m);
+            v.push(Msg::tool_result("c1", &format!("工具长结果 {filler}")));
+            let mut fin = Msg::user(&format!("助手收官 {i} {filler}"));
+            fin.role = "assistant".into();
+            fin.tool_calls = None;
+            v.push(fin);
+        }
+        v
+    }
+
+    #[test]
+    fn compress_split_picks_paired_boundary() {
+        let msgs = long_history();
+        let budget = 2_000;
+        let Some(k) = compress_split(&msgs, budget) else {
+            panic!("满表历史必须找得到切点");
+        };
+        // 切点必须是「user 开头」或「不带 calls 的 assistant 开头」——tool 永远不会被劈开
+        assert!(
+            msgs[k].role == "user" || (msgs[k].role == "assistant" && msgs[k].tool_calls.is_none()),
+            "切点落在非法位置：msgs[{k}] role={}",
+            msgs[k].role
+        );
+        // 前缀含完整配对：数 tool 结果 == 数带 calls 的 assistant
+        let calls = msgs[..k].iter().filter(|m| m.tool_calls.is_some()).count();
+        let tools = msgs[..k].iter().filter(|m| m.role == "tool").count();
+        assert_eq!(calls, tools, "前缀里 assistant(calls) 与 tool 必须配对完整");
+        // 取最右合格边界：没有比它更右的合法边界还过 55% 线
+        let sys_end = msgs.iter().position(|m| m.role != "system").unwrap();
+        let any_later = ((k + 1)..msgs.len())
+            .find(|j| compress_boundary(&msgs[*j]) && history_tokens(&msgs[sys_end..*j]) >= budget * 55 / 100);
+        assert!(any_later.is_none(), "k 不是最右合格切点");
+    }
+
+    #[test]
+    fn compress_split_rejects_short_history() {
+        let mut msgs = long_history();
+        msgs.truncate(6);
+        assert_eq!(compress_split(&msgs, 2_000), None, "≤5 条非 system 历史不压缩");
+    }
 
     /// 形状契约（2026-10-11 多模态）：**没图 / 未开多模态时，请求体里这条消息必须
     /// 和加多模态之前逐字节一致**（content 是字符串，没有多余字段）。

@@ -46,6 +46,83 @@ fn friendly_llm(e: String) -> String {
     }
 }
 
+/* ═══ 压缩内容制（2026-10-13 用户拍板：上下文管理从裁剪制 → 压缩内容制）═══
+ *
+ * 超预算时不再裸丢历史：把「配对完整的旧轮前缀」交给模型压缩成一份要点清单
+ * （事实 / 结论 / 关键数字 / 接着要做的事），替换成一条 user 形态的「历史压缩」消息。
+ * 压缩失败（模型挂了 / 摘要太空）→ 回落旧 trim_history，机制永不倒退。
+ * 压缩结果同时持久化进会话，下一轮直接轻装上阵（与对话式 compact 同理）。
+ */
+const COMPRESS_SYS: &str = "你是上下文压缩器。把「早前对话」压缩成要点清单，供助理无缝衔接之后使用。要求：\
+1) 只保事实与决策：做了什么、结论、关键数字/日期/地点/id、答应过用户的事；2) 逐条短句，不评论不发挥；\
+3) 保持原有先后顺序；4) 有未完成任务时，在最后单列「未完成」段。总长控制在 800 字内。";
+
+fn compress_history(
+    h: &mut dyn Host,
+    cfg: &Config,
+    msgs: &[Msg],
+    budget: usize,
+    emit: &dyn Emit,
+) -> Option<Vec<Msg>> {
+    let k = session::compress_split(msgs, budget)?;
+    let sys_end = msgs.iter().position(|m| m.role != "system").unwrap_or(msgs.len());
+    let doc: String = msgs[sys_end..k]
+        .iter()
+        .filter_map(|m| {
+            m.content.as_deref().map(|c| {
+                let tag = match m.role.as_str() {
+                    "user" => "【用户】",
+                    "assistant" => "【助手】",
+                    "tool" => "【工具】",
+                    _ => "【其他】",
+                };
+                format!("{tag}{}", c.trim())
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if doc.trim().chars().count() < 60 {
+        return None; // 能压的实质内容太少，压了也是噪音
+    }
+    // 超长截尾：压缩请求本身不能把自己对手顶爆，保最末 24k 字符（历史越晚越重要）
+    let doc_cut: String = if doc.chars().count() > 24_000 {
+        doc.chars().skip(doc.chars().count() - 24_000).collect()
+    } else {
+        doc
+    };
+    let req = [
+        Msg {
+            role: "system".into(),
+            ..Msg::user(COMPRESS_SYS) // 复用构造器改 role，省一个手写构造
+        },
+        Msg::user(&format!(
+            "早前对话（压缩对象）：\n{doc_cut}\n\n请输出压缩后的要点清单（只输出清单本身）。"
+        )),
+    ];
+    let mut hooks = Hooks {
+        on_delta: Box::new(|_| {}),
+        on_think: Box::new(|_| {}),
+        on_log: Box::new(|_| {}),
+    };
+    let turn = llm::chat_turn(h, cfg, &req, &[], &mut hooks).ok()?;
+    let text = turn.content.trim();
+    if text.chars().count() < 20 {
+        return None;
+    }
+    progress(
+        emit,
+        "notice",
+        "早前对话已压缩为一则要点清单，继续任务。",
+        None,
+    );
+    let mut out: Vec<Msg> = msgs[..sys_end].to_vec();
+    out.push(Msg::user(&format!(
+        "【历史压缩】早前对话已收纳为要点（事实以本清单 + 最近对话为准）：\n{text}"
+    )));
+    out.extend(msgs[k..].iter().cloned());
+    Some(out)
+}
+
 fn system_prompt(cfg: &Config) -> String {
     format!(
         "你是小OH（OneTHU Harness）——清华园校园助手，运行在 OneTHU 应用内。用简体中文、简洁准确地回答。\n\
@@ -259,7 +336,34 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str, attachments: &[Attac
             let sess = store.sessions.iter().find(|s| s.id == sess_id).unwrap();
             msgs.extend(sess.messages.iter().cloned());
         }
-        session::trim_history(&mut msgs, cfg.max_context);
+        // ── 上下文预算：压缩内容制（2026-10-13 裁剪制 → 压缩内容制）──
+        // 超预算：① 模型压缩「配对完整的旧轮前缀」→ 单条要点清单消息，并持久化回会话
+        // （下轮轻装、信息不失忆）；② 压缩结果里的 images 清空（图片绝不落盘，硬要求）；
+        // ③ 压缩失败/切点太小 → 回落旧 trim_history；④ 双保险再裁一次。
+        let budget = cfg.max_context;
+        if session::history_tokens(&msgs) > budget {
+            progress(emit, "notice", "对话历史超预算，正在压缩早前内容…", None);
+            match compress_history(h, &cfg, &msgs, budget, emit) {
+                Some(c) if session::history_tokens(&c) <= budget => {
+                    let tail: Vec<Msg> = c[1..]
+                        .iter()
+                        .map(|m| {
+                            let mut m2 = m.clone();
+                            m2.images = Vec::new(); // 图片只活在当前 run 内存里
+                            m2
+                        })
+                        .collect();
+                    msgs = c;
+                    if let Some(sess) = store.sessions.iter_mut().find(|s| s.id == sess_id) {
+                        sess.messages = tail;
+                    }
+                }
+                _ => session::trim_history(&mut msgs, budget), // 模型挂了/摘要太空 → 旧路兜底
+            }
+        }
+        if session::history_tokens(&msgs) > budget {
+            session::trim_history(&mut msgs, budget); // 双保险：压缩后仍超，就裁
+        }
 
         progress(emit,
             "notice",
