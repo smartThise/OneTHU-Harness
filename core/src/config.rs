@@ -40,6 +40,10 @@ pub struct Config {
     pub max_steps: u32,
     /// MCP server 定义（设置 mcpServers JSON 解析产物；空 = 未启用）
     pub mcp_servers: Vec<crate::mcp::McpServerDef>,
+    /// 创造模式（2026-10-13）：宿主把 userext 的开关以 creativeMode 随 settings 泵进来
+    /// （facade.settings.get 注入"true"/"false"）。true 时 system_prompt 追加「主动创造」段
+    /// ——只改主动性，不改安全边界：一切写动作仍走各 ext 工具自身的确认位。默认 false。
+    pub creative: bool,
 }
 
 impl Config {
@@ -88,6 +92,9 @@ impl Config {
         // 多模态开关（2026-10-11 用户点名需求）：口径**与 thinking 完全一致**——
         // on|true|1|开 为开，其余（含设置缺失）为关。默认关 = 现状行为不变。
         let multimodal = matches!(get("multimodal").to_lowercase().as_str(), "on" | "true" | "1" | "开");
+        // 创造模式（2026-10-13）：宿主 facade.settings.get 注入 creativeMode 字符串，默认关。
+        // 与 thinking/multimodal 同口径；缺失/看不懂一律关（老宿主没注入 = 保持现状）。
+        let creative = matches!(get("creativeMode").to_lowercase().as_str(), "true" | "on" | "1" | "开");
         // MadModel 免费档（2026-09-19）：apiKey 未填且未显式 provider=custom 时，
         // 走 JS 泵注入的 madmodelToken（清华校园网 DeepSeek，见 state/madmodel.ts）。
         // token 缺失（校外首启泵还没跑通）→ api_key 留空，llm 层给出明确报错。
@@ -154,6 +161,7 @@ impl Config {
             budget_usd: get_num("budget", 2.0).max(0.0),
             max_steps: (get_num("maxSteps", 16.0).max(2.0).min(64.0)) as u32,
             mcp_servers: crate::mcp::parse_servers(&get("mcpServers")),
+            creative,
         }
     }
 }

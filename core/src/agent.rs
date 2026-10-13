@@ -123,8 +123,25 @@ fn compress_history(
     Some(out)
 }
 
+/* ═══ 创造模式（2026-10-13）：userext 的「创造模式」开关随 settings 泵进来后的提示词段 ═══
+ * 只追加主动性指令，不动工作规范的安全边界：一切写动作（创建/删除/发布/改配置）
+ * 仍走各 ext 工具自身的确认位（confirm:true 由引擎统一拦）。开关关 = 恒不注入。 */
+const CREATIVE_PROMPT: &str = "\n\n\
+本会话已开启「创造模式」：你不只是回答问题，还要主动把有用的东西做出来、留下来。\n\
+1. 看见值得固化的操作就主动建议并动手：重复动作 → 建成命名工具（ext_tool_create）或 \
+OneFlow（ext_flow_create，可定时/事件触发）；配色美化 → 造主题（ext_theme_apply）；\
+信息聚合 → 建 OnePage 收纳（ext_onepage_create / ext_onepage_add）；桌面聚合件 → \
+小组件（ext_widget_create）；手机桌面一句话（ext_phone_push）。\n\
+2. 主动寻找「可插件化」的目标：用户提到某个网站/线上服务的常用功能时，先问一句是否\
+探索，同意后用探索浏览器（geek_launch / geek_navigate / geek_read / geek_eval）摸清\
+页面结构，可行就动手把该功能写成本地插件；写完用 pub_check 自检，再按用户意愿 \
+pub_plugin_github 发布、pub_market_pr 提市场收录。\n\
+3. 凡创建/删除/发布/改配置等写动作都会弹确认卡——先简述要做什么再调用，等用户确认\
+通过后继续；未确认不重复催。\n\
+4. 每次创作收尾用一两句汇报：创造了什么、叫什么名字、在哪里能用上它。\n";
+
 fn system_prompt(cfg: &Config) -> String {
-    format!(
+    let mut prompt = format!(
         "你是小OH（OneTHU Harness）——清华园校园助手，运行在 OneTHU 应用内。用简体中文、简洁准确地回答。\n\
          当前时间：{now}。\n\
          \n\
@@ -175,7 +192,12 @@ fn system_prompt(cfg: &Config) -> String {
         model = cfg.model,
         ctx = cfg.max_context,
         steps = cfg.max_steps,
-    )
+    );
+    // 创造模式：开关开才追加指令段（默认关 = 原提示词一字节不变）
+    if cfg.creative {
+        prompt.push_str(CREATIVE_PROMPT);
+    }
+    prompt
 }
 
 fn run_usage_payload(u: &Usage, cost: f64) -> Value {
@@ -277,7 +299,8 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str, attachments: &[Attac
     if store.totals_cost_usd >= cfg.budget_usd {
         return json!({
             "type": "chat", "ok": false,
-            "error": format!("已达 Token 预算上限（已用 {:.4} $ / 预算 {:.2} $）。可在插件设置里调高「预算」。", store.totals_cost_usd, cfg.budget_usd)
+            // 2026-10-13 设置审计：把「Token 预算」改说用户侧口径「自费花费上限」（与新设置标签对齐）
+            "error": format!("已达自费花费上限（已用 {:.4} $ / 上限 {:.2} $）。可在插件设置里调高「自费花费上限」。", store.totals_cost_usd, cfg.budget_usd)
         });
     }
 
