@@ -40,7 +40,7 @@ pub enum Incoming {
 /// 通知到达时的回调：宿主主循环用它收「call 期间抵达的宿主请求」
 pub type Deferred = Vec<(Value, String, Value)>;
 
-type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+pub type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
 
 /// 桥回执等待上限：工具链路 TS 侧自带 45s，600s 是「宿主整个没了」级兜底
 /// 桥调用是本地 IPC（毫秒级）——30s 已是极限宽限；挂死必须尽快显形而非拖 10 分钟
@@ -60,6 +60,11 @@ impl StdioHost {
     /// 启动 stdin 读线程 + 泵线程，返回主机句柄。
     /// interrupt 快路径：读线程看到 interrupt 立即置标志——主循环哪怕阻塞在
     /// LLM SSE 流上，打断也毫秒级生效（agent 循环逐块检查）。
+    /// 桥 Arc 的共享句柄（本机 MCP server 线程用：同一张 pending 表并发服务外部 agent）
+    pub fn bridge_arcs(&self) -> (PendingMap, Arc<AtomicU64>) {
+        (self.pending.clone(), self.seq.clone())
+    }
+
     pub fn spawn() -> StdioHost {
         let (line_tx, line_rx) = mpsc::channel::<String>();
         let interrupt = Arc::new(AtomicBool::new(false));
@@ -174,7 +179,7 @@ impl StdioHost {
 }
 
 /// 桥调用共用体：发请求 → 等泵线程按序号投递回执
-fn bridge_call(
+pub fn bridge_call(
     pending: &PendingMap,
     seq: &AtomicU64,
     ns: &str,
@@ -271,6 +276,7 @@ impl Host for StdioHost {
     fn reset_interrupt(&self) {
         self.interrupt.store(false, Ordering::SeqCst);
     }
+
 }
 
 /// 工作线程桥（chat / 控制命令共用）。reset_interrupt 只有 chat 工作线程

@@ -8,6 +8,7 @@ pub mod host;
 pub mod llm;
 pub mod madmodel;
 pub mod mcp;
+pub mod mcp_server;
 pub mod session;
 pub mod tools;
 pub mod usage;

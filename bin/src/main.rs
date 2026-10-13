@@ -27,6 +27,18 @@ fn now_ms() -> u64 {
 
 fn main() {
     let mut h = StdioHost::spawn();
+    // 本机 MCP server（2026-10-13）：127.0.0.1 回环，端口 OH_MCP_PORT（默认 8787），
+    // OH_MCP_PORT=0 显式关闭。只暴露无需交互确认的工具；tools/call 走同一张桥回执表。
+    {
+        let port = std::env::var("OH_MCP_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(8787);
+        if port > 0 {
+            let (pending, seq) = h.bridge_arcs();
+            onethu_harness_core::mcp_server::spawn(pending, seq, port);
+        }
+    }
     let emit = StdioEmit;
     eprintln!("[harness] sidecar 已启动，等待 activate 握手");
     loop {

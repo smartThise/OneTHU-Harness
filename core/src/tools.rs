@@ -739,6 +739,128 @@ pub fn all_tools() -> Vec<ToolDef> {
         params: p(json!({}), &[]),
         confirm: false,
     },
+    /* —— 用户扩展层元工具（2026-10-13 OH 自我进化第一批）：用户工具 / OneFlow / 生成组件 ——
+       全部转发 TS 侧 ext 命名空间（持久化与执行器在 TS：state/userext.ts）。 —— */
+    ToolDef {
+        name: "ext_flow_create",
+        desc: "创建 OneFlow（工作区+自动化+技能的结合体）：给流程起名、选触发方式（手动 / 定时每 N 分钟 / 事件[作业截止·成绩更新·应用启动]）、再给一串步骤（每步 {tool: \"ns.method\", args: {…}, from: {参数名: \"$N.路径\"}}，$N 引用第 N 步结果）。创建后立即生效：OneGO 的 OneFlow 区可见可跑，定时/事件自动触发。例：每天 8 点查作业并发提醒。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "流程名（如「每日作业播报」）" },
+                "trigger": {
+                    "type": "object",
+                    "description": "触发器：{kind:\"manual\"} / {kind:\"cron\",everyMinutes:30} / {kind:\"event\",event:\"hw-deadline\"|\"grades-update\"|\"app-start\"}",
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["manual", "cron", "event"] },
+                        "everyMinutes": { "type": "number" },
+                        "event": { "type": "string", "enum": ["hw-deadline", "grades-update", "notice", "app-start"] }
+                    },
+                    "required": ["kind"]
+                },
+                "steps": {
+                    "type": "array",
+                    "description": "步骤序列：[{tool:\"ui_navigate\",args:{query:\"作业\"}}, …]；from 可把上一步结果注入参数",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": { "type": "string" },
+                            "args": { "type": "object" },
+                            "from": { "type": "object" }
+                        },
+                        "required": ["tool"]
+                    }
+                }
+            },
+            "required": ["name", "trigger", "steps"]
+        }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_flow_list",
+        desc: "列出全部 OneFlow（名字 / 触发器 / 上次运行与结果）。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_flow_run",
+        desc: "立即运行一个 OneFlow（给 id，来自 ext_flow_list）。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_flow_delete",
+        desc: "删除一个 OneFlow（需先向用户确认）。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_tool_create",
+        desc: "把你刚才用得顺手的**一串工具调用**固化成一个命名工具（用户自定义技能）：之后 ext_tool_run 一步执行。steps 语法与 ext_flow_create 相同（无触发器）。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "工具名（如「查今天作业并高亮」）" },
+                "description": { "type": "string", "description": "一句话说明它做什么（会出现在工具列表里）" },
+                "steps": {
+                    "type": "array",
+                    "description": "步骤序列（同 OneFlow steps）",
+                    "items": { "type": "object", "properties": { "tool": { "type": "string" }, "args": { "type": "object" }, "from": { "type": "object" } }, "required": ["tool"] }
+                }
+            },
+            "required": ["name", "description", "steps"]
+        }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_tool_list",
+        desc: "列出全部用户自定义工具（名字 / 说明）。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_tool_run",
+        desc: "运行一个用户自定义工具（给 id，来自 ext_tool_list）。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_tool_delete",
+        desc: "删除一个用户自定义工具（需先向用户确认）。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_widget_create",
+        desc: "在首页白板上生成一块**用户自定义组件**（你写的 HTML 片段，自动净化脚本后渲染在玻璃卡面里）。适合做：个人签名卡、自定义快捷说明、小抄、倒计时文字等纯展示内容。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "组件名" },
+                "html": { "type": "string", "description": "HTML 片段（可用 h1-h3/p/b/i/ul/li/span/div/a；script 与事件属性会被剥除）" },
+                "x": { "type": "number", "description": "落点（可选，默认左上区域）" },
+                "y": { "type": "number", "description": "落点（可选）" }
+            },
+            "required": ["name", "html"]
+        }),
+        confirm: false,
+    },
     ToolDef {
         name: "add_favorite",
         desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
@@ -1214,6 +1336,43 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             format!("可收藏的原子种类：\n{}", lines.join("\n"))
         };
         return Ok(ToolOut::Text(text));
+    }
+    /* —— 用户扩展层元工具：全部转发 TS 侧 ext 命名空间（持久化与执行器在 TS）—— */
+    if name == "ext_flow_create" {
+        let out = host(ctx, "ext", "flowCreate", json!([s(args, "name"), args.get("trigger").cloned().unwrap_or(json!({"kind":"manual"})), args.get("steps").cloned().unwrap_or(json!([]))]))?;
+        return Ok(ToolOut::Text(format!("OneFlow 已创建并生效：{}", out)));
+    }
+    if name == "ext_flow_list" {
+        let out = host(ctx, "ext", "flowList", json!([]))?;
+        return Ok(ToolOut::Text(out.to_string()));
+    }
+    if name == "ext_flow_run" {
+        let out = host(ctx, "ext", "flowRun", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text(out.to_string()));
+    }
+    if name == "ext_flow_delete" {
+        let out = host(ctx, "ext", "flowDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("OneFlow 已删除。".into()));
+    }
+    if name == "ext_tool_create" {
+        let out = host(ctx, "ext", "toolCreate", json!([s(args, "name"), s(args, "description"), args.get("steps").cloned().unwrap_or(json!([]))]))?;
+        return Ok(ToolOut::Text(format!("用户工具已创建：{}", out)));
+    }
+    if name == "ext_tool_list" {
+        let out = host(ctx, "ext", "toolList", json!([]))?;
+        return Ok(ToolOut::Text(out.to_string()));
+    }
+    if name == "ext_tool_run" {
+        let out = host(ctx, "ext", "toolRun", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text(out.to_string()));
+    }
+    if name == "ext_tool_delete" {
+        let out = host(ctx, "ext", "toolDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("用户工具已删除。".into()));
+    }
+    if name == "ext_widget_create" {
+        let out = host(ctx, "ext", "widgetCreate", json!([s(args, "name"), s(args, "html"), args.get("x").cloned(), args.get("y").cloned()]))?;
+        return Ok(ToolOut::Text(format!("组件已放到首页白板：{}", out)));
     }
     if name == "add_favorite" {
         let title = s(args, "title");
