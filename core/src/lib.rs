@@ -229,3 +229,4 @@ mod tests {
         assert_eq!(images.len(), 1);
     }
 }
+pub mod ghpublish;

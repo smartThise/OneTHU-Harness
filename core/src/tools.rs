@@ -1112,6 +1112,40 @@ pub fn all_tools() -> Vec<ToolDef> {
         params: p(json!({ "id": { "type": "string" } }), &["id"]),
         confirm: true,
     },
+    /* ── 自进化出口：发布（2026-10-13 用户点名「一键提 GitHub + 市场名单 PR」）── */
+    ToolDef {
+        name: "pub_check",
+        desc: "发布前只读探测（不改任何东西）：给本地插件目录与目标 repo（user/repo），返回 gh 登录态 / git 可用性 / 入口文件 / 清单 id 与版本 / 远端仓库是否已存在。路线：先 pub_check，再按结论走 pub_plugin_github 或 pub_market_pr。",
+        params: p(json!({
+            "dir": { "type": "string", "description": "本地插件目录（含 plugin.js/index.js/main.js）" },
+            "repo": { "type": "string", "description": "目标仓库简写 user/repo" }
+        }), &["dir", "repo"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "pub_plugin_github",
+        desc: "一键把**本地插件目录**提交上 GitHub（需要先向用户确认）：git init(如未 init)/add/commit + 远端已存在则直接 push（不代建仓库），不存在且有 gh 登录态则用 gh 一键建仓并推送（--public）；没 gh 有建仓需求时给一步指引。返回仓库地址。",
+        params: p(json!({
+            "dir": { "type": "string", "description": "本地插件目录" },
+            "repo": { "type": "string", "description": "目标仓库 user/repo（不存在将以 public 形式创建）" }
+        }), &["dir", "repo"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "pub_market_pr",
+        desc: "向**插件市场名单**提收录 PR（需要先向用户确认）：fork smartThise/OneTHU-Market → 在新分支把条目追加进 registry.json → 开 Pull Request。id 已在名单里就不再重复提（并提示：数据以插件本体仓库 manifest 为准）。依赖 gh 登录态。",
+        params: p(json!({
+            "id": { "type": "string", "description": "插件 id（onethu.xxx）" },
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "author": { "type": "string" },
+            "description": { "type": "string", "description": "一句话说明" },
+            "repo": { "type": "string", "description": "插件本仓 user/repo" },
+            "entry": { "type": "string", "description": "入口文件名（如 plugin.js）" },
+            "tags": { "type": "array", "description": "分类标签 1-3 个", "items": { "type": "string" } }
+        }), &["id", "name", "version", "repo", "entry"]),
+        confirm: true,
+    },
     ToolDef {
         name: "add_favorite",
         desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
@@ -1172,6 +1206,27 @@ pub fn is_confirm(name: &str) -> bool {
 /// 两段式确认的确认摘要（把对象解析好再给用户看）
 fn build_summary(name: &str, args: &Value, ctx: &mut Ctx) -> Result<String, String> {
     match name {
+        "pub_plugin_github" => {
+            Ok(format!(
+                "把本地插件目录「{}」发布到 GitHub 仓库 {}/{}（远端已存在=只推送；不存在且有 gh 登录=代建 public 仓库；push 的提交含该目录全部文件）",
+                s(args, "dir"),
+                {
+                    let p = crate::ghpublish::probe(&s(args, "dir"), &s(args, "repo"));
+                    if p.account.is_empty() { "你的 GitHub 账号".to_string() } else { p.account.clone() }
+                },
+                s(args, "repo")
+            ))
+        }
+        "pub_market_pr" => {
+            Ok(format!(
+                "向插件市场（OneTHU-Market）提收录 PR：id={}「{}」v{}，仓库 {}，入口 {}",
+                s(args, "id"),
+                s(args, "name"),
+                s(args, "version"),
+                s(args, "repo"),
+                s(args, "entry")
+            ))
+        }
         "cloud_share_file" => {
             Ok(format!(
                 "生成云盘分享链接：{}{}（{}）",
@@ -1972,6 +2027,47 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     if name == "ext_plugin_uninstall" {
         host(ctx, "ext", "pluginUninstall", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text("插件已卸载删除。".into()));
+    }
+    /* ── 发布出口：调 crate::ghpublish（纯本机 git/gh + GitHub API） ── */
+    if name == "pub_check" {
+        let pr = crate::ghpublish::probe(&s(args, "dir"), &s(args, "repo"));
+        let repo_state = match pr.repo_exists {
+            Some(true) => "已存在（pub_plugin_github 会只推不建）",
+            Some(false) => "远端没有（有 gh 登录态可代建）",
+            None => "探测不到（网络或地址不对）",
+        };
+        return Ok(ToolOut::Text(format!(
+            "gh 登录={}（账号 {}）｜git={}｜入口={}｜清单 id={} 版本={}｜远端仓库：{}",
+            if pr.gh { "有" } else { "无" },
+            if pr.account.is_empty() { "—" } else { pr.account.as_str() },
+            if pr.git_ok { "可用" } else { "缺" },
+            if pr.has_entry { pr.entry_name.as_str() } else { "未找到" },
+            if pr.plugin_id.is_empty() { "（没能从清单解析）" } else { pr.plugin_id.as_str() },
+            if pr.version.is_empty() { "—" } else { pr.version.as_str() },
+            repo_state
+        )));
+    }
+    if name == "pub_plugin_github" {
+        let out = crate::ghpublish::publish_to_github(&s(args, "dir"), &s(args, "repo"), true)?;
+        let url = out.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!(
+            "已发布：{url}\n下一步把仓地址收录进市场：pub_market_pr（参数从本目录清单取）。收录成功不必每次重复。"
+        )));
+    }
+    if name == "pub_market_pr" {
+        let mut entry = args.clone();
+        if !entry.get("tags").is_some_and(|v| v.is_array()) {
+            entry["tags"] = json!(["其他"]);
+        }
+        entry["repo"] = json!(s(args, "repo"));
+        let out = crate::ghpublish::market_pr(&entry)?;
+        let url = out.get("pr").and_then(|v| v.as_str()).unwrap_or("");
+        if out.get("existing").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return Ok(ToolOut::Text(format!("已有一个进行中的收录 PR：{url}\n不代劳重复提；等审查即可。")));
+        }
+        return Ok(ToolOut::Text(format!(
+            "收录 PR 已开：{url}\n审查要点（清单标准人工过）：入口可拉取可解析、manifest 与条目一致、权限声明与功能匹配、无混淆/无动态拼装/无凭据收集。合并即收录（应用端 5 分钟缓存后可见）。"
+        )));
     }
     if name == "add_favorite" {
         let title = s(args, "title");
