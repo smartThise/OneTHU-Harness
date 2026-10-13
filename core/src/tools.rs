@@ -847,6 +847,48 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: true,
     },
     ToolDef {
+        name: "ext_theme_apply",
+        desc: "创建并应用一个**用户生成主题**（液态玻璃时代的主题就是一组 CSS 变量）：给名字与变量表（--md-sys-color-primary / --md-sys-color-surface-container… 等 System 名，值任意 CSS 颜色）。立即生效且持久。用户说「换个主题，主色用 X」→ 你算好一套和谐的变量再调本工具。恢复默认 = ext_theme_activate(null)。",
+        params: json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "主题名（如「夜航蓝」）" },
+                "vars": {
+                    "type": "object",
+                    "description": "CSS 变量表：{\"--md-sys-color-primary\": \"#5b9bff\", …}（System 名；至少给 primary/surface 系才有完整观感）"
+                }
+            },
+            "required": ["name", "vars"]
+        }),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_theme_list",
+        desc: "列出全部用户生成主题（名字/是否生效中）。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_theme_activate",
+        desc: "切换/停用用户主题：id 来自 ext_theme_list，传 null 恢复跟随系统主题。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": ["string", "null"], "description": "主题 id；null=恢复默认" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_theme_delete",
+        desc: "删除一个用户生成主题（需先向用户确认）。",
+        params: p(json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        }), &[]),
+        confirm: true,
+    },
+    ToolDef {
         name: "ext_widget_create",
         desc: "在首页白板上生成一块**用户自定义组件**（你写的 HTML 片段，自动净化脚本后渲染在玻璃卡面里）。适合做：个人签名卡、自定义快捷说明、小抄、倒计时文字等纯展示内容。",
         params: json!({
@@ -1369,6 +1411,22 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     if name == "ext_tool_delete" {
         let out = host(ctx, "ext", "toolDelete", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text("用户工具已删除。".into()));
+    }
+    if name == "ext_theme_apply" {
+        let out = host(ctx, "ext", "themeApply", json!([s(args, "name"), args.get("vars").cloned().unwrap_or(json!({}))]))?;
+        return Ok(ToolOut::Text(format!("主题已创建并应用：{}", out)));
+    }
+    if name == "ext_theme_list" {
+        let out = host(ctx, "ext", "themeList", json!([]))?;
+        return Ok(ToolOut::Text(out.to_string()));
+    }
+    if name == "ext_theme_activate" {
+        let out = host(ctx, "ext", "themeActivate", json!([args.get("id").cloned()]))?;
+        return Ok(ToolOut::Text("主题已切换。".into()));
+    }
+    if name == "ext_theme_delete" {
+        let out = host(ctx, "ext", "themeDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("主题已删除。".into()));
     }
     if name == "ext_widget_create" {
         let out = host(ctx, "ext", "widgetCreate", json!([s(args, "name"), s(args, "html"), args.get("x").cloned(), args.get("y").cloned()]))?;
