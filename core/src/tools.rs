@@ -944,6 +944,175 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: false,
     },
     ToolDef {
+        name: "onePage_write",
+        desc: "编辑已存在的 OnePage（用户白板）：op 四选一——\"rename\" 改名（needs name）；\"delete\" 删除（板与内容永久消失，高危）；\"open\" 打开为当前标签页；\"items\" 列出板上的组件 id 与格位（配合 onePage_place 调位 / 删除）。id 来自 ext_onepage_list。",
+        params: p(json!({
+            "op": { "type": "string", "description": "rename | delete | open | items" },
+            "id": { "type": "string", "description": "OnePage id" },
+            "name": { "type": "string", "description": "op=rename 时的新名字" }
+        }), &["op", "id"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "onePage_place",
+        desc: "对 OnePage 上的一个已存在组件做调整：op=move 把它挪到目标格（x/y 以手机 4 列计，不需要视觉判断，直接按用户说的数字来）；op=remove 把它摘下来。boardId/itemId 来自 onePage_write(op=items)。",
+        params: p(json!({
+            "op": { "type": "string", "description": "move | remove" },
+            "boardId": { "type": "string" },
+            "itemId": { "type": "string" },
+            "x": { "type": "number", "description": "op=move 时的目标列（0 起）" },
+            "y": { "type": "number", "description": "op=move 时的目标行（0 起）" }
+        }), &["op", "boardId", "itemId"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "workspace_write",
+        desc: "工作区管理：op=list 列全部工作区（id/名字/是否活板/成员数）；op=create 新建（给 name；可选 tabIds 成员标签数组，不给就把当前页签存档，再不行建一块空活底板）；op=bring 打开为当前工作组；op=collapse 收起活板回到 OneGO 抽屉；op=spread 解除工作区（成组标签复位为散标签，板的定义消失但标签还在，多数场景用这个）。id 来自 op=list。",
+        params: p(json!({
+            "op": { "type": "string", "description": "list | create | bring | collapse | spread" },
+            "name": { "type": "string", "description": "op=create 时的名字" },
+            "tabIds": { "type": "array", "description": "op=create 时的成员标签 id 列表（可选）", "items": { "type": "string" } },
+            "id": { "type": "string", "description": "op=bring/collapse/spread 时的工作区 id" }
+        }), &["op"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_tab",
+        desc: "标签页管理：op=list 列当前全部标签（id/标题/页）；op=open 开新一级标签页（page 可用 today/learn/schedule/info/life/reserve/mail/cloud/gitlab/thubook/tasks/services/favs/boards/board 等）；op=focus 跳到某个已有标签；op=duplicate 再开一个同页同参的标签。",
+        params: p(json!({
+            "op": { "type": "string", "description": "list | open | focus | duplicate" },
+            "page": { "type": "string", "description": "op=open 时的页面名" },
+            "id": { "type": "string", "description": "op=focus/duplicate 时的标签 id" }
+        }), &["op"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_tab_close",
+        desc: "关闭一个标签页（首页关不掉）。id 来自 ext_tab(op=list)。",
+        params: p(json!({ "id": { "type": "string" } }), &["id"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_wallpaper",
+        desc: "读取或设置壁纸：不带 ref 就是读当前（全屏档与当前标签档）；带 ref 则设置。scope=global 改全屏档（整个软件底色）；scope=tab 只改当前标签页。ref 可选内置：builtin:aurora（极光）/ builtin:dusk（暮色）/ builtin:matcha（抹茶）/ builtin:ink（墨）；传 null 或 \"\" 清除档位回落默认。本地图片/视频不动 OH——请用户在 设置→壁纸 的库里上传与点选。",
+        params: p(json!({
+            "scope": { "type": "string", "description": "global | tab" },
+            "ref": { "type": ["string", "null"], "description": "壁纸引用；缺省则只读当前" }
+        }), &["scope"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_voice",
+        desc: "OH 语音设置：调音色与朗读。字段全部可选——autoSpeak（true 自动朗读 OH 回复 / false 静音）、backend（\"system\" 系统音 / \"neural\" 神经音色）、voiceName（音色名，空串=引擎默认）、pitch（0.5~2 语调）、rate（0.5~2 语速）。返回调整后的完整当前值。",
+        params: p(json!({
+            "autoSpeak": { "type": "boolean" },
+            "backend": { "type": "string", "description": "system | neural" },
+            "voiceName": { "type": "string" },
+            "pitch": { "type": "number" },
+            "rate": { "type": "number" }
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_prefs",
+        desc: "外观与一般偏好小开关：capsuleTap（点底部胶囊默认开「search」搜索还是「oh」对话）、voiceTarget（长按语音识别默认发到哪）。leaf 字段可选；返回当前值。",
+        params: p(json!({
+            "capsuleTap": { "type": "string", "description": "search | oh" },
+            "voiceTarget": { "type": "string", "description": "search | oh" }
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_theme_schedule",
+        desc: "昼夜主题自动跟随：followSystem=false 手动模式（ext_theme_apply 即可切）；followSystem=true 时用明暗两档主题——dayThemeId / nightThemeId（可空=跟随系统默认）。返回跟随状态。",
+        params: p(json!({
+            "followSystem": { "type": "boolean" },
+            "dayThemeId": { "type": ["string", "null"] },
+            "nightThemeId": { "type": ["string", "null"] }
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_notify",
+        desc: "通知提醒设置（改完立即生效）：enabled 总开关、ddl 作业截止提醒、classLead 上课前几分钟提醒、briefingAt 每日摘要时刻（HH:mm）、quietFrom/quietTo 免打扰时段（HH:mm）、horizonDays 提前几天内的日程 / maxItems 摘要条数上限。字段全可选，返回当前值。",
+        params: p(json!({
+            "enabled": { "type": "boolean" },
+            "ddl": { "type": "boolean" },
+            "classLead": { "type": "number" },
+            "briefingAt": { "type": "string" },
+            "quietFrom": { "type": "string" },
+            "quietTo": { "type": "string" },
+            "horizonDays": { "type": "number" },
+            "maxItems": { "type": "number" }
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_hw_timeline",
+        desc: "DDL 时间线默认提前量：提醒时间默认提前 minutes 分钟（0~20160）。用户说「提前两晚上提醒我」→ 给分钟数。",
+        params: p(json!({ "minutes": { "type": "number" } }), &["minutes"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_hw_reminder",
+        desc: "单个作业的提醒提前量（覆盖默认）：minutes 传数字设置，传 null 恢复跟随默认。id 是作业 id（网络学堂工具可查）。",
+        params: p(json!({ "id": { "type": "string" }, "minutes": { "type": ["number", "null"] } }), &["id"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_event_add",
+        desc: "新增一条本地日程（会随用户云日历同步生效）：summary 标题、start/end 格式「2026-10-14 09:00」（或毫秒数）、location 可选、allDay 全天档 true、alarmMinutes 提前提醒分钟、onethuWidget=true 时上手机桌面小组件。",
+        params: p(json!({
+            "summary": { "type": "string" },
+            "start": { "type": "string", "description": "「2026-10-14 09:00」或毫秒数" },
+            "end": { "type": "string", "description": "同 start；缺省=同刻" },
+            "location": { "type": "string", "description": "地点（可选）" },
+            "allDay": { "type": "boolean", "description": "全天日程（可选）" },
+            "alarmMinutes": { "type": "number", "description": "提前提醒分钟（可选）" },
+            "onethuWidget": { "type": "boolean", "description": "进手机小组件（可选）" }
+        }), &["summary", "start"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_event_delete",
+        desc: "删除一条本地日程（需先向用户确认）。uid 来自 ext_event_list。",
+        params: p(json!({ "uid": { "type": "string" } }), &["uid"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_event_list",
+        desc: "列出未来 7 天内 + 昨天起的本地与手动日程（uid/time/标题），用于增删前对号。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_plugin_installed",
+        desc: "列出本机已安装插件（id/名字/是否启用）。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "ext_plugin_install",
+        desc: "从 GitHub 仓库一键安装插件（需要先向用户确认）：repo 支持 user/repo、user/repo@dev、完整 URL 或子目录。安装走市场同一校验管线（清单校验 + 权限确认）。",
+        params: p(json!({
+            "repo": { "type": "string", "description": "仓库地址或简写" },
+            "entry": { "type": "string", "description": "入口文件名（可选，缺省按 plugin.js/index.js/main.js 找）" }
+        }), &["repo"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_plugin_toggle",
+        desc: "启用/停用插件（需要先向用户确认）。id 来自 ext_plugin_installed。",
+        params: p(json!({ "id": { "type": "string" }, "on": { "type": "boolean" } }), &["id", "on"]),
+        confirm: true,
+    },
+    ToolDef {
+        name: "ext_plugin_uninstall",
+        desc: "卸载并删除插件（需要先向用户确认，删除后重新安装才能恢复）。id 来自 ext_plugin_installed。",
+        params: p(json!({ "id": { "type": "string" } }), &["id"]),
+        confirm: true,
+    },
+    ToolDef {
         name: "add_favorite",
         desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
         params: json!({
@@ -1547,6 +1716,262 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         } else {
             format!("已推 {n} 行到手机桌面小组件，App 下次进前台即生效。")
         }));
+    }
+    if name == "onePage_write" {
+        let op = s(args, "op");
+        let id = s(args, "id");
+        match op.as_str() {
+            "rename" => {
+                let nm = s(args, "name");
+                if nm.is_empty() {
+                    return Ok(ToolOut::Text("改名需要 name。".into()));
+                }
+                host(ctx, "ext", "onePageRename", json!([id, nm]))?;
+                return Ok(ToolOut::Text("已改名。".into()));
+            }
+            "delete" => {
+                host(ctx, "ext", "onePageDelete", json!([id]))?;
+                return Ok(ToolOut::Text("OnePage 已删除（板和内容都清了）。".into()));
+            }
+            "open" => {
+                host(ctx, "ext", "onePageOpen", json!([id]))?;
+                return Ok(ToolOut::Text("已打开这块 OnePage。".into()));
+            }
+            "items" => {
+                let out = host(ctx, "ext", "onePageItems", json!([id]))?;
+                let rows: Vec<String> = out
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|it| {
+                                format!(
+                                    "id={} kind={} cell=({},{}) {}",
+                                    it.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                    it.get("kind").and_then(|v| v.as_str()).unwrap_or(""),
+                                    it.get("x").and_then(|v| v.as_i64()).unwrap_or(0),
+                                    it.get("y").and_then(|v| v.as_i64()).unwrap_or(0),
+                                    it.get("text").and_then(|v| v.as_str()).unwrap_or("")
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(ToolOut::Text(if rows.is_empty() { "这块板还没有组件（onePage_place 只动已有件；放新件用 ext_onepage_add）。".into() } else { rows.join("\n") }));
+            }
+            _ => return Ok(ToolOut::Text("op 必须是 rename/delete/open/items。".into())),
+        }
+    }
+    if name == "onePage_place" {
+        let op = s(args, "op");
+        let board = s(args, "boardId");
+        let item = s(args, "itemId");
+        if op == "move" {
+            host(ctx, "ext", "onePageMoveItem", json!([board, item, n(args, "x"), n(args, "y")]))?;
+            return Ok(ToolOut::Text("组件已挪位。".into()));
+        }
+        if op == "remove" {
+            host(ctx, "ext", "onePageRemoveItem", json!([board, item]))?;
+            return Ok(ToolOut::Text("组件已摘除。".into()));
+        }
+        return Ok(ToolOut::Text("op 必须是 move / remove。".into()));
+    }
+    if name == "workspace_write" {
+        let op = s(args, "op");
+        match op.as_str() {
+            "list" => {
+                let out = host(ctx, "ext", "workspaceList", json!([]))?;
+                let rows: Vec<String> = out
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|w| {
+                                format!(
+                                    "id={} [{}] {}（{} 个标签）",
+                                    w.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                    if w.get("live").and_then(|v| v.as_bool()).unwrap_or(false) { "活板" } else { "存档" },
+                                    w.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                                    w.get("tabs").and_then(|v| v.as_i64()).unwrap_or(0)
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(ToolOut::Text(if rows.is_empty() { "还没有工作区。op=create 可新建。".into() } else { rows.join("\n") }));
+            }
+            "create" => {
+                let out = host(ctx, "ext", "workspaceCreate", json!([s(args, "name"), args.get("tabIds").cloned().unwrap_or(json!(null))]))?;
+                let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                return Ok(ToolOut::Text(format!("工作区已创建（id={id}）。")));
+            }
+            "bring" => {
+                host(ctx, "ext", "workspaceOpen", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text("已打开为当前工作组。".into()));
+            }
+            "collapse" => {
+                host(ctx, "ext", "workspaceClose", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text("活板已收起。".into()));
+            }
+            "spread" => {
+                host(ctx, "ext", "workspaceDissolve", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text("工作区已解除（成组标签复位为散标签）。".into()));
+            }
+            _ => return Ok(ToolOut::Text("op 必须是 list/create/bring/collapse/spread。删除已存档的工作区用 ext_workspace_delete。".into())),
+        }
+    }
+    if name == "ext_workspace_delete" {
+        host(ctx, "ext", "workspaceDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("工作区定义已删除。".into()));
+    }
+    if name == "ext_tab" {
+        let op = s(args, "op");
+        match op.as_str() {
+            "list" => {
+                let out = host(ctx, "ext", "tabList", json!([]))?;
+                let rows: Vec<String> = out
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|t| {
+                                format!(
+                                    "id={} 「{}」",
+                                    t.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                    t.get("title").and_then(|v| v.as_str()).unwrap_or("")
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(ToolOut::Text(rows.join("\n")));
+            }
+            "open" => {
+                let out = host(ctx, "ext", "tabOpen", json!([s(args, "page")]))?;
+                let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                return Ok(ToolOut::Text(format!("新标签已打开（id={id}）。")));
+            }
+            "focus" => {
+                host(ctx, "ext", "tabFocus", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text("已跳到该标签。".into()));
+            }
+            "duplicate" => {
+                let out = host(ctx, "ext", "tabDuplicate", json!([s(args, "id")]))?;
+                let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                return Ok(ToolOut::Text(format!("已复制标签（新 id={id}）。")));
+            }
+            _ => return Ok(ToolOut::Text("op 必须是 list/open/focus/duplicate。".into())),
+        }
+    }
+    if name == "ext_tab_close" {
+        host(ctx, "ext", "tabClose", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("标签已关闭。".into()));
+    }
+    if name == "ext_wallpaper" {
+        if let Some(r) = args.get("ref").cloned() {
+            let refv = match &r {
+                Value::Null => json!(null),
+                other => other.clone(),
+            };
+            host(ctx, "ext", "wallpaperSet", json!([s(args, "scope"), refv]))?;
+        }
+        let cur = host(ctx, "ext", "wallpaperGet", json!([]))?;
+        return Ok(ToolOut::Text(format!(
+            "全屏档={}；本页档={}（builtin: 前缀是内置渐变，null 是没设）",
+            cur.get("global").map(|v| v.as_str().unwrap_or("null")).unwrap_or("null"),
+            cur.get("tab").map(|v| v.as_str().unwrap_or("null")).unwrap_or("null")
+        )));
+    }
+    if name == "ext_voice" {
+        let out = host(ctx, "ext", "voiceSet", json!([args.clone()]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
+    }
+    if name == "ext_prefs" {
+        host(ctx, "ext", "prefSet", json!([args.get("capsuleTap").cloned().map(|v| json!({ "capsuleTap": v })).unwrap_or(json!({}))]))?;
+        host(ctx, "ext", "prefSet", json!([args.get("voiceTarget").cloned().map(|v| json!({ "voiceTarget": v })).unwrap_or(json!({}))]))?;
+        let out = host(ctx, "ext", "prefGet", json!([]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
+    }
+    if name == "ext_theme_schedule" {
+        let q = json!({
+            "followSystem": args.get("followSystem").cloned().unwrap_or(Value::Null),
+            "dayThemeId": args.get("dayThemeId").cloned().unwrap_or(Value::Null),
+            "nightThemeId": args.get("nightThemeId").cloned().unwrap_or(Value::Null),
+        });
+        let out = host(ctx, "ext", "themeScheduleSet", json!([q]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
+    }
+    if name == "ext_notify" {
+        let out = host(ctx, "ext", "notifySet", json!([args.clone()]))?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
+    }
+    if name == "ext_hw_timeline" {
+        let out = host(ctx, "ext", "hwTimelineSet", json!([n(args, "minutes")]))?;
+        let m = out.get("minutes").and_then(|v| v.as_i64()).unwrap_or(0);
+        return Ok(ToolOut::Text(format!("作业提醒默认提前 {m} 分钟。")));
+    }
+    if name == "ext_hw_reminder" {
+        let minutes = args.get("minutes").cloned().unwrap_or(Value::Null);
+        host(ctx, "ext", "hwReminderSet", json!([s(args, "id"), minutes]))?;
+        return Ok(ToolOut::Text("这条作业的提醒已更新。".into()));
+    }
+    if name == "ext_event_add" {
+        let out = host(ctx, "ext", "eventAdd", json!([args.clone()]))?;
+        let uid = out.get("uid").and_then(|v| v.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("日程已加（uid={uid}）。")));
+    }
+    if name == "ext_event_delete" {
+        host(ctx, "ext", "eventDelete", json!([s(args, "uid")]))?;
+        return Ok(ToolOut::Text("日程已删除。".into()));
+    }
+    if name == "ext_event_list" {
+        let out = host(ctx, "ext", "eventList", json!([]))?;
+        let rows: Vec<String> = out
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|e| {
+                        format!(
+                            "uid={} {} 「{}」",
+                            e.get("uid").and_then(|v| v.as_str()).unwrap_or(""),
+                            e.get("start").and_then(|v| v.as_i64()).map(fmt_mail_ms).unwrap_or_default(),
+                            e.get("summary").and_then(|v| v.as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Ok(ToolOut::Text(if rows.is_empty() { "近 8 天没有本地日程。".into() } else { rows.join("\n") }));
+    }
+    if name == "ext_plugin_installed" {
+        let out = host(ctx, "ext", "pluginInstalledList", json!([]))?;
+        let rows: Vec<String> = out
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|p| {
+                        format!(
+                            "id={} [{}] {}",
+                            p.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            if p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) { "启用" } else { "停用" },
+                            p.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Ok(ToolOut::Text(if rows.is_empty() { "本机没有已安装插件（可以从插件市场或 GitHub 装）。".into() } else { rows.join("\n") }));
+    }
+    if name == "ext_plugin_install" {
+        let out = host(ctx, "ext", "pluginInstallFromRepo", json!([s(args, "repo"), args.get("entry").and_then(|v| if v.is_null() { None } else { v.as_str() })]))?;
+        let id = out.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let nm = out.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("插件「{nm}」已安装（id={id}），装好即在插件页可见。")));
+    }
+    if name == "ext_plugin_toggle" {
+        host(ctx, "ext", "pluginEnableToggle", json!([s(args, "id"), args.get("on").and_then(|v| v.as_bool()).unwrap_or(true)]))?;
+        return Ok(ToolOut::Text("插件状态已切换。".into()));
+    }
+    if name == "ext_plugin_uninstall" {
+        host(ctx, "ext", "pluginUninstall", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text("插件已卸载删除。".into()));
     }
     if name == "add_favorite" {
         let title = s(args, "title");
