@@ -152,6 +152,9 @@ fn system_prompt(cfg: &Config) -> String {
          （预约在官方页面完成，jump_venue_booking 跳转）、宿舍公共空间查询/预约/取消、\
          CourseX 任意学期课程时间地点、选课目录/已选/选课社区评价（评课独立可查）、\
          电子发票/银行代发/研究生收入/宿舍卫生/体测/教学评估、应用内跳转、toast 提示、\
+首页与 OnePage 白板（新建/改名/删除/打开；收藏一颗元素可**先选落点**：首页或某块已有 OnePage，\
+用 onePage_collect；白板上的组件用 onePage_write/onePage_place 管理）、首页程序坞（时间下面那排球，\
+用 home_dock 停靠或取消停靠一级页与插件功能页）、本机 MCP 服务器状态（mcp_status，只读）、\
 长期记忆（memory_* 工具：跨会话留存，经云盘 OH-Memory 资料库多端共享）。\n\
          \n\
          工作规范：\n\
@@ -185,7 +188,13 @@ fn system_prompt(cfg: &Config) -> String {
          查重（已有同主题就 memory_append 追加，不重复建）再 memory_write（系统会让用户\
          确认后才写入）；「我之前说过/让你记住过什么」→ 先 memory_search 再答，没有\
          记录就直说。凭据类内容（密码/验证码/密钥）会被引擎硬拦，不要尝试写入。\
-         你具备长期记忆能力（memory_* 工具），绝不声称自己没有记忆。\n\
+         你具备长期记忆能力（memory_* 工具），绝不声称自己没有记忆。\
+         10. 页面与落点的口径：应用首页 = 首页（page id 是 today，界面上没有「今日」\
+         这个说法）；用户口中的「白板 / 我的页面 / OnePage」是同一件事，具体某块板用\
+         boardId 定位（ext_onepage_list 拿 id），打开它 = navigate board + {{boardId}}。\
+         收藏一颗元素时**先问落点**（首页 or 哪块 OnePage），别默认塞进哪一边；\
+         用户问「怎么让别的 agent / 别的客户端连上你」→ 先 mcp_status，再照实给端点与\
+         开关位置（那是**只读**工具，开关只能用户在设置里拨，不许说你替他开了）。\n\
          \n\
          模型：{model}；上下文预算约 {ctx} tokens；单次任务最多 {steps} 步工具调用。",
         now = now_line(),
@@ -762,5 +771,28 @@ fn humanize_tool_text(t: &str) -> String {
                 t.to_string()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> Config {
+        Config::from_settings(&serde_json::Map::new())
+    }
+
+    /// 系统提示词的新口径（2026-10-15 接线）：白板/落点/坞/mcp_status 都要点到，
+    /// 且 **format 转义不能漏**（`{boardId}` 写成 `{{boardId}}`；漏了就编译不过或被吃掉）。
+    #[test]
+    fn system_prompt_mentions_new_wiring() {
+        let p = system_prompt(&cfg());
+        assert!(p.contains("boardId"), "白板要按 boardId 说：{p}");
+        assert!(p.contains("navigate board + {boardId}"), "打开某块板的写法要完整（转义没漏）");
+        assert!(!p.contains("{{"), "不该有残留的双花括号：{p}");
+        assert!(p.contains("onePage_collect"), "收藏落点工具要点名");
+        assert!(p.contains("home_dock"), "首页程序坞工具要点名");
+        assert!(p.contains("mcp_status"), "本机 MCP 服务器状态工具要点名");
+        assert!(p.contains("首页") && p.contains("没有「今日」"), "「今日」改名后的口径要写进去：{p}");
     }
 }
