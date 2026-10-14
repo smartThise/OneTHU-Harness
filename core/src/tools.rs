@@ -579,10 +579,10 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "navigate",
-            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。网络学堂一键直达：learn-course {courseId, semesterId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, semesterId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId, semesterId}（具体作业）、learn-notice-detail {courseId, itemId, semesterId}（具体通知）、learn-files {courseId, semesterId}（文件列表）、learn-assignments/learn-notices。semesterId=课程所属学期（query_learn_courses 返回的 semester；**必传**——courseId 是学期作用域的，不传会落空白页）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
+            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。白板（用户 OnePage）：page=board 配 {\"boardId\":\"board.xxx\"} 直接打开**指定那块板**（boardId 来自 ext_onepage_list），不带 boardId = 打开当前板；page=boards = 「所有白板」列表页。网络学堂一键直达：learn-course {courseId, semesterId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, semesterId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId, semesterId}（具体作业）、learn-notice-detail {courseId, itemId, semesterId}（具体通知）、learn-files {courseId, semesterId}（文件列表）、learn-assignments/learn-notices。semesterId=课程所属学期（query_learn_courses 返回的 semester；**必传**——courseId 是学期作用域的，不传会落空白页）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
             params: p(json!({
                 "page": {"type": "string"},
-                "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}"}
+                "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}；白板用 {\"boardId\":\"board.xxx\"}"}
             }), &["page"]),
             confirm: false,
         },
