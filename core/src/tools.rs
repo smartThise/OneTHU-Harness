@@ -972,6 +972,24 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: false,
     },
     ToolDef {
+        name: "onePage_collect",
+        desc: "把一颗原子收进**首页**或指定的 OnePage（白板）—— 收藏「元素」选落点用的就是它。不给 boardId = 落首页（用户回到首页直接看到它，可拖动/改大小）；给 boardId = 落那块已有 OnePage。atomKey 是原子引用 <kind>:<key>（来自 list_favorite_kinds / nav.searchAtoms / 收藏夹），boardId 来自 ext_onepage_list。同一块板上已有同一颗原子时不会重复放（返回 duplicate，如实说「已经有了」而不是假装收进去了）。",
+        params: p(json!({
+            "atomKey": { "type": "string", "description": "原子引用 <kind>:<key>，如 course:123 / thos:xxx" },
+            "boardId": { "type": "string", "description": "目标 OnePage id；不传 = 落首页" }
+        }), &["atomKey"]),
+        confirm: false,
+    },
+    ToolDef {
+        name: "home_dock",
+        desc: "首页程序坞（首页时间下面那排球）：不带 pageId = 只看现状（坞上有哪些球、还能停哪些，都带名字）；带 pageId + on=true/false = 停靠 / 取消停靠。pageId 是首页一级页（tasks/learn/schedule/life…，见返回的 canDock）或**插件功能页**（形如 plugin:<插件>:<页>，插件注册的功能页也在 canDock 里）。用户说「把打卡页放到首页」「首页那个球去掉」时用它；认不出的 pageId 会报错并列出可停靠项，不会静默加一颗看不见的球。",
+        params: p(json!({
+            "pageId": { "type": "string", "description": "要停靠/取消停靠的页面 id；留空 = 只读现状" },
+            "on": { "type": "boolean", "description": "true = 停靠，false = 取消停靠（与 pageId 同时给）" }
+        }), &[]),
+        confirm: false,
+    },
+    ToolDef {
         name: "workspace_write",
         desc: "工作区管理：op=list 列全部工作区（id/名字/是否活板/成员数）；op=create 新建（给 name；可选 tabIds 成员标签数组，不给就把当前页签存档，再不行建一块空活底板）；op=bring 打开为当前工作组；op=collapse 收起活板回到 OneGO 抽屉；op=spread 解除工作区（成组标签复位为散标签，板的定义消失但标签还在，多数场景用这个）。id 来自 op=list。",
         params: p(json!({
@@ -1893,6 +1911,101 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             return Ok(ToolOut::Text("组件已摘除。".into()));
         }
         return Ok(ToolOut::Text("op 必须是 move / remove。".into()));
+    }
+    if name == "onePage_collect" {
+        /* 收藏「元素」选落点（2026-10-15 用户定案）：首页 / 已有 OnePage。
+           门面那侧只调 state/onePage.ts 的高阶函数（自带查重与落位），这里只管落点与措辞。 */
+        let key = s(args, "atomKey").trim().to_string();
+        if key.is_empty() {
+            return Ok(ToolOut::Text(
+                "缺 atomKey：原子引用形如 course:123 / thos:xxx（可用 list_favorite_kinds，或先 nav.searchAtoms 找）。".into(),
+            ));
+        }
+        let board = s(args, "boardId").trim().to_string();
+        let to_home = board.is_empty();
+        let target = if to_home { json!({ "to": "home" }) } else { json!({ "boardId": board }) };
+        let v = host(ctx, "ext", "onePageAddAtom", json!([target, key]))?;
+        let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+        let where_ = if to_home { "首页".to_string() } else { format!("OnePage（板 id {}）", s(&v, "boardId")) };
+        if ok {
+            return Ok(ToolOut::Text(format!(
+                "已收进{where_}：用户在{}上直接能看到它，可拖动、改大小（同板同原子不会重复放）。",
+                if to_home { "首页" } else { "那块板" }
+            )));
+        }
+        let reason = s(&v, "reason");
+        let msg = match reason.as_str() {
+            "duplicate" => format!("{where_}上已经有这颗原子了，没有重复放（要挪位置用 onePage_place）。"),
+            "no-board" => "找不到那块 OnePage（id 不对或已删除）：先用 ext_onepage_list 看现有板 id，或干脆落首页（不传 boardId）。".to_string(),
+            other => format!("没能收进去（{other}）：可先用 ext_onepage_list 核对板 id，再试一次。"),
+        };
+        return Ok(ToolOut::Text(msg));
+    }
+    if name == "home_dock" {
+        /* 首页程序坞（2026-10-15 新能力：插件功能页与一级页同权进坞）。 */
+        let page_id = s(args, "pageId").trim().to_string();
+        let on = args.get("on").and_then(|v| v.as_bool());
+        if !page_id.is_empty() && on.is_none() {
+            return Ok(ToolOut::Text(
+                "要停靠/取消停靠请把 on 一起给（true=停靠，false=取消停靠）；只想看现状就别传 pageId。".into(),
+            ));
+        }
+        let v = if page_id.is_empty() {
+            host(ctx, "ext", "homeDock", json!([Value::Null, Value::Null]))?
+        } else {
+            host(ctx, "ext", "homeDock", json!([page_id, on.unwrap_or(false)]))?
+        };
+        let names = |key: &str| -> Vec<String> {
+            v.get(key)
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.to_string()).collect())
+                .unwrap_or_default()
+        };
+        let label_of = |id: &str| -> String {
+            v.get("entries")
+                .and_then(|x| x.as_array())
+                .and_then(|a| {
+                    a.iter()
+                        .find(|e| e.get("page").and_then(|p| p.as_str()) == Some(id))
+                        .and_then(|e| e.get("label").and_then(|l| l.as_str()))
+                        .map(|l| l.to_string())
+                })
+                .unwrap_or_default()
+        };
+        let docked = names("docked");
+        let dockable = names("dockable");
+        if page_id.is_empty() {
+            let rows: Vec<String> = docked
+                .iter()
+                .map(|id| {
+                    let l = label_of(id);
+                    if l.is_empty() { id.clone() } else { format!("{l}（{id}）") }
+                })
+                .collect();
+            let rest: Vec<String> = dockable
+                .iter()
+                .filter(|id| !docked.contains(id))
+                .map(|id| {
+                    let l = label_of(id);
+                    if l.is_empty() { id.clone() } else { format!("{l}（{id}）") }
+                })
+                .take(40)
+                .collect();
+            return Ok(ToolOut::Text(pretty(&json!({
+                "docked": rows,
+                "canDock": rest,
+                "count": docked.len(),
+                "note": "停靠/取消停靠：带 pageId 与 on 再调一次。插件功能页也在 canDock 里（来自插件注册的功能页）"
+            }))));
+        }
+        let label = label_of(&page_id);
+        let doing = if on == Some(true) { "停靠" } else { "取消停靠" };
+        let shown = if label.is_empty() { page_id.clone() } else { format!("{label}（{page_id}）") };
+        return Ok(ToolOut::Text(format!(
+            "已{doing}{shown}。首页程序坞现在有 {} 颗球：{}。",
+            docked.len(),
+            docked.iter().map(|id| label_of(id)).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("、")
+        )));
     }
     if name == "workspace_write" {
         let op = s(args, "op");
@@ -3739,6 +3852,108 @@ mod tests {
             ToolOut::Text(t) => serde_json::from_str(&t).unwrap_or_else(|e| panic!("返回不是 JSON：{e}；原文 {t}")),
             ToolOut::ConfirmNeeded { summary, .. } => panic!("不该要求确认：{summary}"),
         }
+    }
+
+    /// 会记账的宿主：只回预先塞好的答案（验证工具→门面的入参形状与措辞）
+    struct FakeHost {
+        calls: std::cell::RefCell<Vec<(String, String, Value)>>,
+        replies: std::cell::RefCell<Vec<Value>>,
+    }
+
+    impl FakeHost {
+        fn new(replies: Vec<Value>) -> Self {
+            Self { calls: std::cell::RefCell::new(Vec::new()), replies: std::cell::RefCell::new(replies) }
+        }
+        fn took(&self) -> Vec<(String, String, Value)> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl Host for FakeHost {
+        fn call(&mut self, ns: &str, method: &str, args: Value) -> Result<Value, String> {
+            self.calls.borrow_mut().push((ns.to_string(), method.to_string(), args));
+            let mut r = self.replies.borrow_mut();
+            if r.is_empty() {
+                return Ok(json!(null));
+            }
+            Ok(r.remove(0))
+        }
+        fn interrupted(&self) -> bool {
+            false
+        }
+    }
+
+    fn run_with(host: &mut FakeHost, name: &str, args: Value) -> String {
+        let mut ctx = Ctx { h: host };
+        match execute(&mut ctx, name, &args, true, &[]).expect("工具不该报错") {
+            ToolOut::Text(t) => t,
+            ToolOut::ConfirmNeeded { summary, .. } => panic!("不该要求确认：{summary}"),
+        }
+    }
+
+    /// 收藏落点：不给 boardId = 落首页（target={to:home}）；给 boardId 就落那块板；
+    /// 失败原因要如实转述，不许把 duplicate 说成"收好了"。
+    #[test]
+    fn one_page_collect_lands_home_or_board() {
+        let mut h = FakeHost::new(vec![json!({"ok": true, "boardId": "board.today", "added": "it.1"})]);
+        let t = run_with(&mut h, "onePage_collect", json!({"atomKey": "course:1"}));
+        let calls = h.took();
+        assert_eq!(calls[0].0, "ext");
+        assert_eq!(calls[0].1, "onePageAddAtom");
+        assert_eq!(calls[0].2, json!([{"to": "home"}, "course:1"]), "落首页要传 {{to:home}}");
+        assert!(t.contains("首页"), "措辞要落到首页：{t}");
+
+        let mut h = FakeHost::new(vec![json!({"ok": true, "boardId": "board.user.x", "added": "it.2"})]);
+        run_with(&mut h, "onePage_collect", json!({"atomKey": "course:2", "boardId": "board.user.x"}));
+        assert_eq!(h.took()[0].2, json!([{"boardId": "board.user.x"}, "course:2"]), "落指定板要传 boardId");
+
+        let mut h = FakeHost::new(vec![json!({"ok": false, "boardId": "board.today", "reason": "duplicate"})]);
+        let t = run_with(&mut h, "onePage_collect", json!({"atomKey": "course:1"}));
+        assert!(t.contains("已经有"), "duplicate 要说清没重复放：{t}");
+
+        let mut h = FakeHost::new(vec![json!({"ok": false, "boardId": "board.x", "reason": "no-board"})]);
+        let t = run_with(&mut h, "onePage_collect", json!({"atomKey": "course:1", "boardId": "board.x"}));
+        assert!(t.contains("ext_onepage_list"), "板不存在要给下一步（去哪拿板 id）：{t}");
+
+        let mut h = FakeHost::new(vec![]);
+        let t = run_with(&mut h, "onePage_collect", json!({}));
+        assert!(h.took().is_empty(), "缺 atomKey 不该打扰宿主");
+        assert!(t.contains("atomKey"), "缺参要说清怎么补：{t}");
+    }
+
+    /// 首页程序坞：不带 pageId = 只读（传 [null,null]）；带 pageId 必须带 on；
+    /// 只读要同时给"坞上有什么"和"还能停什么"（含插件功能页 —— 本轮新能力）。
+    #[test]
+    fn home_dock_reads_and_writes() {
+        let snap = json!({
+            "ok": true, "pageId": "", "label": "",
+            "docked": ["tasks", "learn"],
+            "dockable": ["tasks", "learn", "life", "plugin:onethu.habit:main"],
+            "entries": [
+                {"page": "tasks", "label": "待办", "plugin": false},
+                {"page": "learn", "label": "课程", "plugin": false},
+                {"page": "life", "label": "生活", "plugin": false},
+                {"page": "plugin:onethu.habit:main", "label": "打卡", "plugin": true}
+            ]
+        });
+        let mut h = FakeHost::new(vec![snap.clone()]);
+        let t = run_with(&mut h, "home_dock", json!({}));
+        assert_eq!(h.took()[0].2, json!([null, null]), "只读要传 [null,null]（不传 pageId）");
+        assert!(t.contains("待办") && t.contains("课程"), "坞上的球要带名字：{t}");
+        assert!(t.contains("打卡"), "还能停的项也要带名字（插件功能页同上墙）：{t}");
+
+        let mut h = FakeHost::new(vec![snap.clone()]);
+        run_with(&mut h, "home_dock", json!({"pageId": "life", "on": true}));
+        assert_eq!(h.took()[0].2, json!(["life", true]), "停靠要传 [pageId, true]");
+
+        let mut h = FakeHost::new(vec![snap]);
+        run_with(&mut h, "home_dock", json!({"pageId": "plugin:onethu.habit:main", "on": false}));
+        assert_eq!(h.took()[0].2, json!(["plugin:onethu.habit:main", false]), "插件功能页同样能取消停靠");
+
+        let mut h = FakeHost::new(vec![]);
+        let t = run_with(&mut h, "home_dock", json!({"pageId": "life"}));
+        assert!(h.took().is_empty(), "缺 on 不该猜：先问清楚再动坞");
+        assert!(t.contains("on"), "要把 on 怎么给说清楚：{t}");
     }
 
     /// mcp_status（2026-10-15 接线）：只读、默认关、端点/工具计数/指路都对得上，
