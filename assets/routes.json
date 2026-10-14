@@ -128,6 +128,30 @@
     "note": ""
   },
   {
+    "id": "oh-mcp-server",
+    "title": "OH MCP 服务器",
+    "desc": "让本机其它助手连上 OneTHU（默认关闭）",
+    "aliases": [
+      "MCP 服务器",
+      "本机 MCP",
+      "8787",
+      "外部客户端"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "高级配置",
+      "模型 / MCP / 日志",
+      "OH MCP 服务器"
+    ],
+    "kind": "oh",
+    "tier": "advanced",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "模型 / MCP / 日志",
+    "note": ""
+  },
+  {
     "id": "voice-engine",
     "title": "引擎状态",
     "desc": "当前平台是否支持语音合成 / 重新检查",
