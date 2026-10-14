@@ -52,6 +52,32 @@
     "note": ""
   },
   {
+    "id": "oh-contextmode",
+    "title": "上下文记忆模式",
+    "desc": "历史超长自动收成要点清单，重要内容不再丢",
+    "aliases": [
+      "上下文",
+      "记忆",
+      "压缩",
+      "历史",
+      "要点",
+      "压缩内容制"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "基础设置",
+      "模型与多模态",
+      "上下文记忆模式"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "模型与多模态",
+    "note": ""
+  },
+  {
     "id": "oh-keepalive",
     "title": "后台保活（华为 / 荣耀）",
     "desc": "应用启动管理设手动管理并允许自启动/关联启动/后台活动",
@@ -78,7 +104,7 @@
   {
     "id": "oh-adv-plugins",
     "title": "模型 / 配额预算 / MCP / 命令与日志 / 权限",
-    "desc": "插件自己的面板，就地渲染",
+    "desc": "",
     "aliases": [
       "MCP",
       "配额",
