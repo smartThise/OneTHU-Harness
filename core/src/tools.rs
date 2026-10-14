@@ -741,7 +741,7 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "mcp_status",
-        desc: "查「本机 MCP 服务器」的状态（把 OneTHU 自己暴露给本机其它 MCP 客户端）：开关开没开、监听是否就位、端点地址、当前暴露多少工具。用户问「怎么让别的 agent / 别的客户端连上你」「本机 MCP 开了吗」「你能被外部调用吗」时先调它，再照实说端点与开关位置。**只读** —— 开关只能用户在设置里拨，不要声称你替他开了；也别和「OH 去连别人的 MCP 服务器」（反向，在插件设置的 MCP 服务器列表里）混为一谈。",
+        desc: "查「本机 MCP 服务器」的状态（把 OneTHU 自己暴露给本机其它 MCP 客户端）：开关开没开、监听是否就位、端点地址、当前暴露多少工具。**注意「监听已就位只是开关关着」与「根本没起监听」是两回事**（state 字段直接给了人话）：前者请用户去设置里拨开关就通，后者是启动参数（OH_MCP_PORT=0）或端口被占，改设置没用。用户问「怎么让别的 agent / 别的客户端连上你」「本机 MCP 开了吗」「你能被外部调用吗」时先调它，再照实说端点与开关位置。**只读** —— 开关只能用户在设置里拨，不要声称你替他开了；也别和「OH 去连别人的 MCP 服务器」（反向，在插件设置的 MCP 服务器列表里）混为一谈。",
         params: p(json!({}), &[]),
         confirm: false,
     },
@@ -3464,6 +3464,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 "port": port,
                 "endpoint": if port == 0 { String::new() } else { crate::mcp_server::endpoint() },
                 "reachableNow": on && listening && port > 0,
+                "state": mcp_state_text(on, listening, port),
                 "exposedTools": exposed,
                 "withheldTools": withheld,
                 "switchPath": "设置 → 插件 → OneTHU Harness → 高级配置 → 「OH MCP 服务器」开关",
@@ -3677,8 +3678,7 @@ fn try_open_service(ctx: &mut Ctx, query: &str, want_kind: &str) -> Result<Optio
     })))
 }
 
-fn or_default(v: &str, d: &str) -> String {
-    if v.trim().is_empty() {
+fn or_default(v: &str, d: &str) -> String {    if v.trim().is_empty() {
         d.to_string()
     } else {
         v.to_string()
@@ -3698,8 +3698,23 @@ fn fmt_mail_ms(ms: i64) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
-/** 云盘资料库按名/ID 定位（精确名 → 前缀唯一 → ID） */
-fn find_cloud_repo<'a>(repos: &'a [Value], want: &str) -> Result<&'a Value, String> {
+/// mcp_status 的一句话状态（Lead 实测后点名要分开说的两件事）：
+/// 「监听已就位、只是总闸关着」与「根本没起监听」在用户侧完全是两件事 —— 前者去设置里
+/// 拨一下开关就通（生产路径正是如此：sidecar 常驻绑定 listener、闸门默认关），后者是
+/// **启动参数**（OH_MCP_PORT=0）或端口被占，改设置没有任何用。
+fn mcp_state_text(enabled: bool, listening: bool, port: u16) -> String {
+    if port == 0 {
+        return "没有起监听：启动时给了 OH_MCP_PORT=0（启动参数，拨设置里的开关不会让监听起来）".into();
+    }
+    match (enabled, listening) {
+        (true, true) => "已开启且监听就位：本机客户端现在就能连".into(),
+        (false, true) => "监听已就位，只等总闸：用户在设置里拨开「OH MCP 服务器」即通（在此之前连接一律 403）".into(),
+        (true, false) => "闸门已开但监听没就位（端口被占或绑定失败）：看 sidecar 日志的 [mcp] 行".into(),
+        (false, false) => "闸门关着、监听也没就位：先看 sidecar 日志 [mcp] 行为什么没绑上（多半是端口被占）".into(),
+    }
+}
+
+/** 云盘资料库按名/ID 定位（精确名 → 前缀唯一 → ID） */fn find_cloud_repo<'a>(repos: &'a [Value], want: &str) -> Result<&'a Value, String> {
     let exact: Vec<&Value> = repos.iter().filter(|r| s(r, "name") == want).collect();
     if let [r] = exact.as_slice() {
         return Ok(r);
@@ -3954,6 +3969,19 @@ mod tests {
         let t = run_with(&mut h, "home_dock", json!({"pageId": "life"}));
         assert!(h.took().is_empty(), "缺 on 不该猜：先问清楚再动坞");
         assert!(t.contains("on"), "要把 on 怎么给说清楚：{t}");
+    }
+
+    /// 一句话状态必须把「开关关着」与「没起监听」分开说（Lead 实测生产路径＝监听常驻+闸门关，
+    /// 那种情况一拨开关就通；OH_MCP_PORT=0 则要改启动参数）。
+    #[test]
+    fn mcp_state_text_separates_gate_from_listener() {
+        let off_but_listening = mcp_state_text(false, true, 8787);
+        assert!(off_but_listening.contains("只等总闸") && off_but_listening.contains("403"), "{off_but_listening}");
+        let no_listener = mcp_state_text(false, false, 0);
+        assert!(no_listener.contains("OH_MCP_PORT=0"), "要指向启动参数：{no_listener}");
+        assert!(no_listener.contains("不会让监听起来"), "别让用户白跑设置页：{no_listener}");
+        assert!(mcp_state_text(true, true, 8787).contains("现在就能连"));
+        assert!(mcp_state_text(true, false, 8787).contains("端口被占"));
     }
 
     /// mcp_status（2026-10-15 接线）：只读、默认关、端点/工具计数/指路都对得上，
