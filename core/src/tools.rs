@@ -739,6 +739,12 @@ pub fn all_tools() -> Vec<ToolDef> {
         params: p(json!({}), &[]),
         confirm: false,
     },
+    ToolDef {
+        name: "mcp_status",
+        desc: "查「本机 MCP 服务器」的状态（把 OneTHU 自己暴露给本机其它 MCP 客户端）：开关开没开、监听是否就位、端点地址、当前暴露多少工具。用户问「怎么让别的 agent / 别的客户端连上你」「本机 MCP 开了吗」「你能被外部调用吗」时先调它，再照实说端点与开关位置。**只读** —— 开关只能用户在设置里拨，不要声称你替他开了；也别和「OH 去连别人的 MCP 服务器」（反向，在插件设置的 MCP 服务器列表里）混为一谈。",
+        params: p(json!({}), &[]),
+        confirm: false,
+    },
     /* —— 用户扩展层元工具（2026-10-13 OH 自我进化第一批）：用户工具 / OneFlow / 生成组件 ——
        全部转发 TS 侧 ext 命名空间（持久化与执行器在 TS：state/userext.ts）。 —— */
     ToolDef {
@@ -1529,15 +1535,21 @@ fn resolve_room(ctx: &mut Ctx, args: &Value) -> Result<(Value, String), String> 
 /// 执行工具。confirmed=true 表示用户已确认（仅确认型工具使用）。
 pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_servers: &[crate::mcp::McpServerDef]) -> Result<ToolOut, String> {
     // MCP 动态工具（B2）：name 形如 mcp_<server>_<tool>
+    // 静态工具名也可能以 `mcp_` 开头（mcp_status，2026-10-15 接线）：**先认静态表**，
+    // 否则静态工具会被动态解析吞掉、回一句「未找到 MCP server」（本测试当场抓到的）。
     if let Some(full) = name.strip_prefix("mcp_") {
-        for def in mcp_servers {
-            let prefix = crate::mcp::tool_full_name(&def.name, "");
-            if let Some(tool) = full.strip_prefix(&prefix) {
-                let text = crate::mcp::call_tool(def, tool, args)?;
-                return Ok(ToolOut::Text(if text.is_empty() { "（MCP 工具执行完成，无输出）".into() } else { text }));
+        if all_tools().iter().any(|t| t.name == name) {
+            /* 静态工具：落到下面各自的分支 */
+        } else {
+            for def in mcp_servers {
+                let prefix = crate::mcp::tool_full_name(&def.name, "");
+                if let Some(tool) = full.strip_prefix(&prefix) {
+                    let text = crate::mcp::call_tool(def, tool, args)?;
+                    return Ok(ToolOut::Text(if text.is_empty() { "（MCP 工具执行完成，无输出）".into() } else { text }));
+                }
             }
+            return Ok(ToolOut::Text(format!("未找到 MCP server：{name}（检查设置 mcpServers）")));
         }
-        return Ok(ToolOut::Text(format!("未找到 MCP server：{name}（检查设置 mcpServers）")));
     }
     // 联动插件（B1）：插件命令工具化——模型经宿主门禁调用已启用插件
     if name == "list_plugin_cmds" {
@@ -3321,6 +3333,34 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 "note": "用 ui_navigate {routeId} 直达；行 id 稳定，但若 UI 改版仍以 ui_route_table 的最新清单为准"
             })
         }
+        "mcp_status" => {
+            /* 只读报告：把 OneTHU 自己暴露出去的那个总闸（core/src/mcp_server.rs 的 ENABLED）。
+               "开关"与"监听是否绑上"分开说 —— 用户把「闸门关着」看成「服务没起」是最常见的误解。
+               不碰宿主：webview 不在场（或这条请求就是从本机 MCP 客户端进来的）也能答。 */
+            let on = crate::mcp_server::is_enabled();
+            let listening = crate::mcp_server::is_listening();
+            let port = crate::mcp_server::port();
+            let defs = all_tools();
+            let exposed = defs.iter().filter(|t| !t.confirm).count();
+            let withheld = defs.len() - exposed;
+            let outbound: Vec<String> = mcp_servers.iter().map(|m| m.name.clone()).collect();
+            json!({
+                "server": "OneTHU 本机 MCP 服务器（把 OneTHU 自己暴露给本机其它客户端）",
+                "enabled": on,
+                "listening": listening,
+                "port": port,
+                "endpoint": if port == 0 { String::new() } else { crate::mcp_server::endpoint() },
+                "reachableNow": on && listening && port > 0,
+                "exposedTools": exposed,
+                "withheldTools": withheld,
+                "switchPath": "设置 → 插件 → OneTHU Harness → 高级配置 → 「OH MCP 服务器」开关",
+                "takeEffect": "拨完开关后发一条消息或重开 OH 即生效（每轮对话同步一次闸门）",
+                "clientSetup": "别的 MCP 客户端（Claude Desktop / 脚本 / 编辑器插件）把地址填成 endpoint（Streamable-HTTP，POST JSON-RPC：initialize / tools/list / tools/call）；仅本机回环，不跨机",
+                "whenOff": "关着时任何连接一律 403 并说明未开启（不是超时、也不是空工具表）",
+                "outboundServers": outbound,
+                "note": "反向的「OH 去连别人的 MCP 服务器」是另一件事（插件设置里的 MCP 服务器列表，设置键 mcpServers），与本开关互不影响。开关只能用户在设置里拨：本工具只读。"
+            })
+        }
         "open_page" => {
             let q = s(args, "query");
             let q = q.trim().to_string();
@@ -3673,4 +3713,76 @@ fn thubook_extract(html: &str) -> (String, String) {
         }
     }
     (title, text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 空宿主：只读工具（mcp_status）不该碰数据面 —— 真碰了就在这里炸，暴露设计漂移。
+    struct NoHost;
+
+    impl Host for NoHost {
+        fn call(&mut self, ns: &str, method: &str, _args: Value) -> Result<Value, String> {
+            panic!("该工具不该调宿主：{ns}.{method}");
+        }
+        fn interrupted(&self) -> bool {
+            false
+        }
+    }
+
+    /// 跑一条工具，取回它给模型的文本并解析成 JSON
+    fn run(name: &str, args: Value) -> Value {
+        let mut h = NoHost;
+        let mut ctx = Ctx { h: &mut h };
+        match execute(&mut ctx, name, &args, true, &[]).expect("工具不该报错") {
+            ToolOut::Text(t) => serde_json::from_str(&t).unwrap_or_else(|e| panic!("返回不是 JSON：{e}；原文 {t}")),
+            ToolOut::ConfirmNeeded { summary, .. } => panic!("不该要求确认：{summary}"),
+        }
+    }
+
+    /// mcp_status（2026-10-15 接线）：只读、默认关、端点/工具计数/指路都对得上，
+    /// 并且**不能**声称能替用户开开关。
+    #[test]
+    fn mcp_status_reports_gate_and_endpoint() {
+        crate::mcp_server::set_enabled(false);
+        let v = run("mcp_status", json!({}));
+        assert_eq!(v["enabled"], json!(false), "默认必须是关（本机暴露要用户显式打开）");
+        assert_eq!(v["reachableNow"], json!(false));
+        assert!(v["endpoint"].as_str().unwrap_or("").ends_with("/mcp"), "端点要落到 /mcp：{}", v["endpoint"]);
+        assert!(v["endpoint"].as_str().unwrap_or("").starts_with("http://127.0.0.1:"), "只本机回环：{}", v["endpoint"]);
+        assert!(v["switchPath"].as_str().unwrap_or("").contains("高级配置"), "要说清开关在哪：{}", v["switchPath"]);
+        let exposed = v["exposedTools"].as_i64().unwrap_or(0);
+        let withheld = v["withheldTools"].as_i64().unwrap_or(0);
+        assert!(exposed > 50, "无需确认的工具应该有量：{exposed}");
+        assert!(withheld > 0, "需要确认的写操作不该上墙：{withheld}");
+
+        /* 闸门开：报告要跟着变（reachableNow 仍取决于监听在不在，测试线程里没起监听） */
+        crate::mcp_server::set_enabled(true);
+        let on = run("mcp_status", json!({}));
+        assert_eq!(on["enabled"], json!(true));
+        assert_eq!(on["listening"], json!(false), "没起监听时要说实话");
+        crate::mcp_server::set_enabled(false);
+    }
+
+    /// 端口口径唯一处：OH_MCP_PORT 认得出就认，认不出退回 8787（报告与 bin 同一个函数）。
+    #[test]
+    fn mcp_port_env_is_respected() {
+        std::env::set_var("OH_MCP_PORT", "9311");
+        assert_eq!(crate::mcp_server::port(), 9311);
+        assert!(crate::mcp_server::endpoint().contains(":9311/mcp"));
+        std::env::set_var("OH_MCP_PORT", "不是数字");
+        assert_eq!(crate::mcp_server::port(), 8787, "脏值退回默认，不 panic");
+        std::env::remove_var("OH_MCP_PORT");
+    }
+
+    /// 本机 MCP 墙上的工具表 = 全部无需确认的工具：mcp_status 必须在墙内（用户问
+    /// 「别的客户端能看到什么」时，答案要一致）。
+    #[test]
+    fn mcp_status_is_exposed_on_the_wall() {
+        let defs = all_tools();
+        let me = defs.iter().find(|t| t.name == "mcp_status").expect("mcp_status 得注册进工具表");
+        assert!(!me.confirm, "只读工具不该要求确认（要求确认就不会上墙）");
+        assert!(defs.iter().filter(|t| !t.confirm).any(|t| t.name == "mcp_status"));
+    }
 }

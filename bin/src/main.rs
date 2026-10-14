@@ -34,10 +34,8 @@ fn main() {
     // 这里只负责把 listener 常驻绑上；接不接受请求由 core::mcp_server 的闸门决定，
     // 而闸门由设置里那个「OH MCP 服务器」开关驱动（core::agent::chat 每轮同步，默认关）。
     {
-        let port = std::env::var("OH_MCP_PORT")
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(8787);
+        /* 端口口径在 core::mcp_server::port()（与 mcp_status 工具同一处读法，改一处即可） */
+        let port = onethu_harness_core::mcp_server::port();
         if port > 0 {
             let (pending, seq) = h.bridge_arcs();
             onethu_harness_core::mcp_server::spawn(pending, seq, port);

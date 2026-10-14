@@ -48,6 +48,27 @@ pub fn is_enabled() -> bool {
     ENABLED.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// listener 是否真的绑上了（`OH_MCP_PORT=0` 或绑定失败 → false）。
+/// 与总闸分开报：用户容易把「闸门关着」当成「服务没起」，mcp_status 要把两件事说清。
+static LISTENING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_listening() -> bool {
+    LISTENING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 端口口径**唯一处**（bin 与报告共用）：`OH_MCP_PORT`，解析失败/未设 → 8787。
+/// 注意 0 在 bin 侧表示「连监听都不起」，这里照样把它读出来（报告要说实话）。
+pub fn port() -> u16 {
+    std::env::var("OH_MCP_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .unwrap_or(8787)
+}
+
+pub fn endpoint() -> String {
+    format!("http://127.0.0.1:{}/mcp", port())
+}
+
 fn tool_defs() -> Vec<(String, String, Value, bool)> {
     tools::all_tools()
         .into_iter()
@@ -75,6 +96,7 @@ pub fn spawn(pending: PendingMap, seq: Arc<AtomicU64>, port: u16) {
             port,
             if is_enabled() { "已开启" } else { "关闭中：等设置开关，连接一律 403" }
         );
+        LISTENING.store(true, std::sync::atomic::Ordering::SeqCst);
         for stream in listener.incoming() {
             if let Ok(stream) = stream {
                 let host = BridgeHost { pending: pending.clone(), seq: seq.clone() };
