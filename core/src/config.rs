@@ -44,6 +44,10 @@ pub struct Config {
     /// （facade.settings.get 注入"true"/"false"）。true 时 system_prompt 追加「主动创造」段
     /// ——只改主动性，不改安全边界：一切写动作仍走各 ext 工具自身的确认位。默认 false。
     pub creative: bool,
+    /// OH MCP **服务器**总闸（2026-10-15 用户点名）：宿主把开关以 "mcpServer" 随 settings 泵进来。
+    /// true = 本机 MCP server 接受连接（POST http://127.0.0.1:8787/mcp）；false = 一律 403。
+    /// 只影响"把 OneTHU 暴露给别人"，与上面 mcp_servers（OH 去连别人）是**反向**的两件事。默认 false。
+    pub mcp_server: bool,
 }
 
 impl Config {
@@ -161,6 +165,7 @@ impl Config {
             budget_usd: get_num("budget", 2.0).max(0.0),
             max_steps: (get_num("maxSteps", 16.0).max(2.0).min(64.0)) as u32,
             mcp_servers: crate::mcp::parse_servers(&get("mcpServers")),
+            mcp_server: matches!(get("mcpServer").to_lowercase().as_str(), "true" | "1" | "on" | "开"),
             creative,
         }
     }

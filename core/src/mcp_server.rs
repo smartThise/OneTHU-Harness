@@ -32,6 +32,22 @@ impl Host for BridgeHost {
     fn reset_interrupt(&self) {}
 }
 
+/// 总闸（2026-10-15 用户点名「OH MCP 是把我们自己暴露成 MCP」）：
+/// `core::agent::chat` 每轮按设置同步一次（幂等，值没变不打印）。
+/// 默认**关** —— 本机暴露必须由用户显式打开；旧行为是环境变量默认就开。
+static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_enabled(on: bool) {
+    let was = ENABLED.swap(on, std::sync::atomic::Ordering::SeqCst);
+    if was != on {
+        eprintln!("[mcp] 本机 MCP server {}", if on { "已开启" } else { "已关闭（连接一律 403）" });
+    }
+}
+
+pub fn is_enabled() -> bool {
+    ENABLED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn tool_defs() -> Vec<(String, String, Value, bool)> {
     tools::all_tools()
         .into_iter()
@@ -39,7 +55,12 @@ fn tool_defs() -> Vec<(String, String, Value, bool)> {
         .collect()
 }
 
-/// 由 sidecar main 在 StdioHost::spawn 后调用（桥 Arc 共享给本线程组）
+/// 由 sidecar main 在 StdioHost::spawn 后调用（桥 Arc 共享给本线程组）。
+///
+/// 2026-10-15 起：**起监听 ≠ 对外可用**。listener 常驻绑定（Rust 标准库没有可移植的
+/// 「温和收回端口」写法），真正决定接不接受请求的是下面那个闸门 —— 由用户在
+/// OH 设置 → 插件 → OneTHU Harness → 高级配置里的「OH MCP 服务器」开关经 settings
+/// 泵进来（core::agent::chat 每轮同步一次）。
 pub fn spawn(pending: PendingMap, seq: Arc<AtomicU64>, port: u16) {
     std::thread::spawn(move || {
         let listener = match TcpListener::bind(("127.0.0.1", port)) {
@@ -49,7 +70,11 @@ pub fn spawn(pending: PendingMap, seq: Arc<AtomicU64>, port: u16) {
                 return;
             }
         };
-        eprintln!("[mcp] 本机 MCP server 已就绪：POST http://127.0.0.1:{}/mcp", port);
+        eprintln!(
+            "[mcp] 本机 MCP 监听已就位：POST http://127.0.0.1:{}/mcp（当前{}）",
+            port,
+            if is_enabled() { "已开启" } else { "关闭中：等设置开关，连接一律 403" }
+        );
         for stream in listener.incoming() {
             if let Ok(stream) = stream {
                 let host = BridgeHost { pending: pending.clone(), seq: seq.clone() };
@@ -92,6 +117,16 @@ pub fn spawn(pending: PendingMap, seq: Arc<AtomicU64>, port: u16) {
             if !is_post {
                 let _ = write_resp(&mut stream, 405, "{\"error\":\"POST /mcp\"}");
                 continue;
+            }
+            /* 总闸（2026-10-15 用户点名）：OH 设置高级档那个「OH MCP 服务器」开关。
+               关 = 立刻 403 断开 —— 外部客户端看到的是明确的"未开启"，而不是超时或空工具表。 */
+            if !is_enabled() {
+                let _ = write_resp(
+                    &mut stream,
+                    403,
+                    "{\"error\":\"OH MCP 服务器未开启：请在 OneTHU 的设置 → 插件 → OneTHU Harness → 高级配置里打开\"}",
+                );
+                return;
             }
             let reply = handle_rpc(&String::from_utf8_lossy(&body), host);
             if write_resp(&mut stream, 200, &reply).is_err() {

@@ -28,7 +28,11 @@ fn now_ms() -> u64 {
 fn main() {
     let mut h = StdioHost::spawn();
     // 本机 MCP server（2026-10-13）：127.0.0.1 回环，端口 OH_MCP_PORT（默认 8787），
-    // OH_MCP_PORT=0 显式关闭。只暴露无需交互确认的工具；tools/call 走同一张桥回执表。
+    // OH_MCP_PORT=0 = 连监听都不起（开发期/偏执模式）。只暴露无需交互确认的工具；
+    // tools/call 走同一张桥回执表。
+    // 2026-10-15 改口径（用户点名「OH MCP 是把我们自己暴露成 MCP」）：**起监听 ≠ 对外可用**。
+    // 这里只负责把 listener 常驻绑上；接不接受请求由 core::mcp_server 的闸门决定，
+    // 而闸门由设置里那个「OH MCP 服务器」开关驱动（core::agent::chat 每轮同步，默认关）。
     {
         let port = std::env::var("OH_MCP_PORT")
             .ok()

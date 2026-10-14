@@ -231,6 +231,11 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str, attachments: &[Attac
     };
     let map = settings.as_object().cloned().unwrap_or_default();
     let cfg = Config::from_settings(&map);
+    /* OH MCP 服务器总闸（2026-10-15 用户点名）：把 OneTHU **自己**暴露成本机 MCP server。
+       每轮 chat 同步一次 —— 用户在「设置 → 插件 → OneTHU Harness → 高级配置」里拨开关，
+       发下一条消息即生效（listener 由 bin 常驻绑定，这里只翻"接不接受请求"的闸门）。
+       与下面的 mcp 客户端方向互不相干：那是 OH 去连别人。 */
+    crate::mcp_server::set_enabled(cfg.mcp_server);
     if cfg.api_key.is_empty() {
         // 免费档 token 未就绪 ≠ 没填自费 Key：前者说「去填 Key」会把人带偏（用户实录 2026-09-20）
         let err = if cfg.uses_free_tier {
