@@ -68,13 +68,13 @@ pub fn all_tools() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "thubook_toc",
-            desc: "列 THUbook（清华手册，thubook.help）的全部页面路径。先看目录再决定读哪页",
+            desc: "列 THUBook（清华手册，thubook.help）的全部页面路径。先看目录再决定读哪页",
             params: p(json!({}), &[]),
             confirm: false,
         },
         ToolDef {
             name: "thubook_read",
-            desc: "读 THUbook 某页正文（纯文本）。path 来自 thubook_toc，如 /thubook/专题/chuguo.html；缺省为手册首页",
+            desc: "读 THUBook 某页正文（纯文本）。path 来自 thubook_toc，如 /thubook/专题/chuguo.html；缺省为手册首页",
             params: p(json!({
                 "path": {"type": "string", "description": "页面路径，以 / 开头；缺省 /thubook/"}
             }), &[]),
@@ -3750,7 +3750,7 @@ fn fmt_size(b: i64) -> String {
 }
 
 
-/* ══════════ THUbook（thubook.help）抓取与正文提取 ══════════ */
+/* ══════════ THUBook（thubook.help）抓取与正文提取 ══════════ */
 
 fn thubook_fetch(url: &str) -> Result<String, String> {
     ureq::AgentBuilder::new()
@@ -3758,11 +3758,11 @@ fn thubook_fetch(url: &str) -> Result<String, String> {
         .timeout(std::time::Duration::from_secs(25))
         .build()
         .get(url)
-        .set("User-Agent", "OneTHU-Harness/0.1 (THUbook reader)")
+        .set("User-Agent", "OneTHU-Harness/0.1 (THUBook reader)")
         .call()
-        .map_err(|e| format!("THUbook 请求失败：{e}"))?
+        .map_err(|e| format!("THUBook 请求失败：{e}"))?
         .into_string()
-        .map_err(|e| format!("THUbook 读取失败：{e}"))
+        .map_err(|e| format!("THUBook 读取失败：{e}"))
 }
 
 /// 预渲染 VuePress 页面 → (标题, 纯文本正文)：main 优先，去 script/style/tag，
