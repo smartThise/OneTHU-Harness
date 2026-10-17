@@ -41,10 +41,12 @@ pub fn parse_servers(raw: &str) -> Vec<McpServerDef> {
         None => return Vec::new(),
     };
     let mut out = Vec::new();
+    /* 同名 server 的工具前缀（mcp_<name>_）会撞车：只留第一条，UI 侧也会挡。 */
+    let mut seen = std::collections::HashSet::new();
     for item in arr {
         let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let command = item.get("command").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        if name.is_empty() || command.is_empty() {
+        if name.is_empty() || command.is_empty() || !seen.insert(name.clone()) {
             continue;
         }
         let args = item

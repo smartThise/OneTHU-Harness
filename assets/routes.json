@@ -152,6 +152,32 @@
     "note": ""
   },
   {
+    "id": "oh-mcp-client",
+    "title": "连接外部 MCP 服务器",
+    "desc": "让 OH 调用外部 MCP server 的工具（增删改在插件页高级档）",
+    "aliases": [
+      "MCP 客户端",
+      "外部 MCP",
+      "添加 MCP 服务器",
+      "MCP 服务器列表",
+      "filesystem MCP",
+      "stdio MCP"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "高级配置",
+      "模型 / MCP / 日志",
+      "连接外部 MCP 服务器"
+    ],
+    "kind": "oh",
+    "tier": "advanced",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "模型 / MCP / 日志",
+    "note": ""
+  },
+  {
     "id": "voice-engine",
     "title": "引擎状态",
     "desc": "当前平台是否支持语音合成 / 重新检查",

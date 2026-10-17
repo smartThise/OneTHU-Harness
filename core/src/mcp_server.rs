@@ -105,114 +105,178 @@ pub fn spawn(pending: PendingMap, seq: Arc<AtomicU64>, port: u16) {
         }
     });
 
-    fn serve(mut stream: TcpStream, host: &BridgeHost) {
-        let _ = stream.set_nodelay(true);
+
+}
+
+fn serve(mut stream: TcpStream, host: &BridgeHost) {
+    let _ = stream.set_nodelay(true);
+    loop {
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
         loop {
-            let mut buf = Vec::new();
-            let mut byte = [0u8; 1];
-            loop {
-                match stream.read(&mut byte) {
-                    Ok(0) | Err(_) => return,
-                    Ok(_) => {
-                        buf.push(byte[0]);
-                        if buf.ends_with(b"\r\n\r\n") || buf.ends_with(b"\n\n") {
-                            break;
-                        }
-                        if buf.len() > 16384 {
-                            return;
-                        }
+            match stream.read(&mut byte) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {
+                    buf.push(byte[0]);
+                    if buf.ends_with(b"\r\n\r\n") || buf.ends_with(b"\n\n") {
+                        break;
+                    }
+                    if buf.len() > 16384 {
+                        return;
                     }
                 }
-            }
-            let head = String::from_utf8_lossy(&buf);
-            let is_post = head.starts_with("POST");
-            let len = head
-                .to_ascii_lowercase()
-                .split("\r\n")
-                .find_map(|l| l.strip_prefix("content-length:"))
-                .and_then(|v| v.trim().parse::<usize>().ok())
-                .unwrap_or(0);
-            let mut body = vec![0u8; len];
-            if len > 0 && stream.read_exact(&mut body).is_err() {
-                return;
-            }
-            if !is_post {
-                let _ = write_resp(&mut stream, 405, "{\"error\":\"POST /mcp\"}");
-                continue;
-            }
-            /* 总闸（2026-10-15 用户点名）：OH 设置高级档那个「OH MCP 服务器」开关。
-               关 = 立刻 403 断开 —— 外部客户端看到的是明确的"未开启"，而不是超时或空工具表。 */
-            if !is_enabled() {
-                let _ = write_resp(
-                    &mut stream,
-                    403,
-                    "{\"error\":\"OH MCP 服务器未开启：请在 OneTHU 的设置 → 插件 → OneTHU Harness → 高级配置里打开\"}",
-                );
-                return;
-            }
-            let reply = handle_rpc(&String::from_utf8_lossy(&body), host);
-            if write_resp(&mut stream, 200, &reply).is_err() {
-                return;
             }
         }
+        let head = String::from_utf8_lossy(&buf);
+        let is_post = head.starts_with("POST");
+        let len = head
+            .to_ascii_lowercase()
+            .split("\r\n")
+            .find_map(|l| l.strip_prefix("content-length:"))
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut body = vec![0u8; len];
+        if len > 0 && stream.read_exact(&mut body).is_err() {
+            return;
+        }
+        if !is_post {
+            let _ = write_resp(&mut stream, 405, "{\"error\":\"POST /mcp\"}");
+            continue;
+        }
+        /* 总闸（2026-10-15 用户点名）：OH 设置高级档那个「OH MCP 服务器」开关。
+           关 = 立刻 403 断开 —— 外部客户端看到的是明确的"未开启"，而不是超时或空工具表。 */
+        if !is_enabled() {
+            let _ = write_resp(
+                &mut stream,
+                403,
+                "{\"error\":\"OH MCP 服务器未开启：请在 OneTHU 的设置 → 插件 → OneTHU Harness → 高级配置里打开\"}",
+            );
+            return;
+        }
+        let reply = handle_rpc(&String::from_utf8_lossy(&body), host);
+        if write_resp(&mut stream, 200, &reply).is_err() {
+            return;
+        }
     }
+}
 
-    fn write_resp(stream: &mut TcpStream, code: u16, body: &str) -> std::io::Result<()> {
-        let reason = if code == 200 { "OK" } else { "ERR" };
-        write!(
-            stream,
-            "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )
-    }
+fn write_resp(stream: &mut TcpStream, code: u16, body: &str) -> std::io::Result<()> {
+    let reason = match code {
+        200 => "OK",
+        202 => "Accepted",
+        204 => "No Content",
+        403 => "Forbidden",
+        405 => "Method Not Allowed",
+        _ => "ERR",
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
 
-    fn handle_rpc(raw: &str, host: &BridgeHost) -> String {
-        let v: Value = match serde_json::from_str(raw) {
-            Ok(v) => v,
-            Err(e) => {
-                return json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("解析失败：{e}")}})
-                    .to_string()
-            }
-        };
-        let id = v.get("id").cloned().unwrap_or(Value::Null);
-        let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
-        let params = v.get("params").cloned().unwrap_or(json!({}));
-        let result: Value = match method.as_str() {
-            "initialize" => json!({
+fn rpc_result(id: Value, result: Value) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
+}
+
+fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } }).to_string()
+}
+
+fn handle_rpc(raw: &str, host: &BridgeHost) -> String {
+    let v: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(e) => return rpc_error(Value::Null, -32700, format!("解析失败：{e}")),
+    };
+    let id = v.get("id").cloned().unwrap_or(Value::Null);
+    let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let params = v.get("params").cloned().unwrap_or(json!({}));
+    match method.as_str() {
+        "initialize" => rpc_result(
+            id,
+            json!({
                 "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "onethu", "version": env!("CARGO_PKG_VERSION")}
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": "onethu", "version": env!("CARGO_PKG_VERSION") }
             }),
-            "tools/list" => {
-                let list: Vec<Value> = tool_defs()
-                    .into_iter()
-                    .filter(|t| !t.3)
-                    .map(|t| json!({"name": t.0, "description": t.1, "inputSchema": t.2}))
-                    .collect();
-                json!({"tools": list})
-            }
-            "tools/call" => {
-                let name = params.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                if tool_defs().into_iter().find(|t| t.0 == name).map(|t| t.3) == Some(true) {
-                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"该工具需要交互确认，本机 MCP 不暴露"}})
-                } else {
-                    let mut bh = host.clone();
-                    let mut ctx = crate::tools::Ctx { h: &mut bh };
-                    match tools::execute(&mut ctx, &name, &args, true, &[]) {
-                        Ok(out) => {
-                            let text = match out {
-                                crate::tools::ToolOut::Text(t) => t,
-                                crate::tools::ToolOut::ConfirmNeeded { summary, .. } => summary,
-                            };
-                            json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":text}]}})
-                        }
-                        Err(e) => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":e}}),
+        ),
+        /* 客户端的通知不需要响应（原先回 -32601 错误会让标准 MCP 客户端握手报警）。 */
+        m if m.starts_with("notifications/") => String::new(),
+        "tools/list" => {
+            let list: Vec<Value> = tool_defs()
+                .into_iter()
+                .filter(|t| !t.3)
+                .map(|t| json!({"name": t.0, "description": t.1, "inputSchema": t.2}))
+                .collect();
+            rpc_result(id, json!({ "tools": list }))
+        }
+        "tools/call" => {
+            let name = params.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            if tool_defs().into_iter().find(|t| t.0 == name).map(|t| t.3) == Some(true) {
+                rpc_error(id, -32602, "该工具需要交互确认，本机 MCP 不暴露")
+            } else {
+                let mut bh = host.clone();
+                let mut ctx = crate::tools::Ctx { h: &mut bh };
+                match tools::execute(&mut ctx, &name, &args, true, &[]) {
+                    Ok(out) => {
+                        let text = match out {
+                            crate::tools::ToolOut::Text(t) => t,
+                            crate::tools::ToolOut::ConfirmNeeded { summary, .. } => summary,
+                        };
+                        rpc_result(id, json!({ "content": [{ "type": "text", "text": text }] }))
                     }
+                    Err(e) => rpc_error(id, -32000, e),
                 }
             }
-            other => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":format!("未知方法：{other}")}}),
-        };
-        result.to_string()
+        }
+        other => rpc_error(id, -32601, format!("未知方法：{other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host() -> BridgeHost {
+        BridgeHost { pending: Default::default(), seq: Arc::new(AtomicU64::new(1)) }
+    }
+
+    fn rpc(raw: &str) -> Value {
+        serde_json::from_str(&handle_rpc(raw, &host())).expect("响应必须是 JSON")
+    }
+
+    #[test]
+    fn initialize_and_tools_list_are_jsonrpc_envelopes() {
+        let v = rpc(r#"{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}"#);
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], 7);
+        assert!(v["result"]["protocolVersion"].is_string(), "initialize 必须回协议版本：{v}");
+        assert_eq!(v["result"]["serverInfo"]["name"], "onethu");
+
+        let v = rpc(r#"{"jsonrpc":"2.0","id":8,"method":"tools/list","params":{}}"#);
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], 8);
+        let tools = v["result"]["tools"].as_array().expect("tools/list 要有 tools 数组");
+        let all = crate::tools::all_tools();
+        let exposed = all.iter().filter(|t| !t.confirm).count();
+        assert_eq!(tools.len(), exposed, "列表必须与 confirm 过滤一致");
+        assert!(tools.iter().all(|t| t["inputSchema"].is_object()), "每个工具都要带 inputSchema");
+    }
+
+    #[test]
+    fn notifications_get_no_body_unknown_methods_get_error() {
+        assert!(handle_rpc(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, &host()).is_empty());
+        let v = rpc(r#"{"jsonrpc":"2.0","id":9,"method":"resources/list"}"#);
+        assert_eq!(v["error"]["code"], -32601, "未知方法要回 JSON-RPC 错误：{v}");
+    }
+
+    #[test]
+    fn confirm_tools_are_rejected_by_inbound_server() {
+        let name = crate::tools::all_tools().into_iter().find(|t| t.confirm).map(|t| t.name).expect("至少要有一个 confirm 工具");
+        let raw = json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":name,"arguments":{}}}).to_string();
+        let v = rpc(&raw);
+        assert_eq!(v["error"]["code"], -32602, "confirm 工具必须被扣下：{v}");
     }
 }
