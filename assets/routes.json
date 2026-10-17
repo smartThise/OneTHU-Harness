@@ -533,6 +533,51 @@
     "note": ""
   },
   {
+    "id": "set-orgs",
+    "title": "我的组织",
+    "desc": "建立组织、邀请成员、共享资料空间",
+    "aliases": [
+      "组织",
+      "建组织",
+      "成员",
+      "邀请"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "我的组织",
+      "我的组织"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "我的组织",
+    "note": ""
+  },
+  {
+    "id": "set-org-invite",
+    "title": "组织邀请口令",
+    "desc": "生成/接受组织邀请口令",
+    "aliases": [
+      "邀请口令",
+      "加入组织",
+      "组织名片"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "我的组织",
+      "组织邀请口令"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "我的组织",
+    "note": ""
+  },
+  {
     "id": "set-theme-board",
     "title": "主题",
     "desc": "只列已启用主题，点「应用」切换",
