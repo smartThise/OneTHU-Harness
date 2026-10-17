@@ -579,7 +579,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "navigate",
-            desc: "在 OneTHU 应用内跳转页面（today/learn/schedule/info/life/reserve/settings 等，可带参数）。白板（用户 OnePage）：page=board 配 {\"boardId\":\"board.xxx\"} 直接打开**指定那块板**（boardId 来自 ext_onepage_list），不带 boardId = 打开当前板；page=boards = 「所有白板」列表页。网络学堂一键直达：learn-course {courseId, semesterId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, semesterId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId, semesterId}（具体作业）、learn-notice-detail {courseId, itemId, semesterId}（具体通知）、learn-files {courseId, semesterId}（文件列表）、learn-assignments/learn-notices。semesterId=课程所属学期（query_learn_courses 返回的 semester；**必传**——courseId 是学期作用域的，不传会落空白页）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
+            desc: "在 OneTHU 应用内跳转页面（homepage/learn/schedule/info/life/reserve/settings 等，可带参数；旧别名 today 也映射到 homepage）。白板（用户 OnePage）：page=board 配 {\"boardId\":\"board.xxx\"} 直接打开**指定那块板**（boardId 来自 ext_onepage_list），不带 boardId = 打开当前板；page=boards = 「所有白板」列表页。网络学堂一键直达：learn-course {courseId, semesterId, courseTab?: files|notifications|bbs}、learn-forum-thread {courseId, itemId, semesterId, bqid?}（具体帖子）、learn-assignment-detail {courseId, itemId, semesterId}（具体作业）、learn-notice-detail {courseId, itemId, semesterId}（具体通知）、learn-files {courseId, semesterId}（文件列表）、learn-assignments/learn-notices。semesterId=课程所属学期（query_learn_courses 返回的 semester；**必传**——courseId 是学期作用域的，不传会落空白页）。资金类只读红线不拦导航：校园卡充值界面 = navigate life + {\"lifeTab\":\"card\"}（充值由用户在官方界面完成，助手不代充）",
             params: p(json!({
                 "page": {"type": "string"},
                 "params": {"type": "object", "description": "如 {\"reserveTab\":\"lib\"}；白板用 {\"boardId\":\"board.xxx\"}"}
@@ -749,7 +749,7 @@ pub fn all_tools() -> Vec<ToolDef> {
        全部转发 TS 侧 ext 命名空间（持久化与执行器在 TS：state/userext.ts）。 —— */
     ToolDef {
         name: "ext_flow_create",
-        desc: "创建 OneFlow（工作区+自动化+技能的结合体）：给流程起名、选触发方式（手动 / 定时每 N 分钟 / 事件[作业截止·成绩更新·应用启动]）、再给一串步骤（每步 {tool: \"ns.method\", args: {…}, from: {参数名: \"$N.路径\"}}，$N 引用第 N 步结果）。创建后立即生效：OneGO 的 OneFlow 区可见可跑，定时/事件自动触发。例：每天 8 点查作业并发提醒。",
+        desc: "创建 OneFlow（工作区+自动化+技能的结合体）：给流程起名、选触发方式（手动 / 定时每 N 分钟 / 事件[作业截止·成绩更新·通知·应用启动]）、再给一串步骤。**步骤的 tool 是插件门面的 ns.method**（如 nav.go / ext.onePageAddAtom），不是 OH 自带工具名；args 推荐传数组（按方法位置参数展开，如 args:[\"schedule\"]），单参数方法也可传对象；from 只能配对象 args，用 {参数名:\"$N.路径\"} 引用第 N 步结果。创建后立即生效：OneGO 的 OneFlow 区可见可跑，定时/事件自动触发。例：[{\"tool\":\"nav.go\",\"args\":[\"schedule\"]}]。",
         params: json!({
             "type": "object",
             "properties": {
@@ -766,12 +766,12 @@ pub fn all_tools() -> Vec<ToolDef> {
                 },
                 "steps": {
                     "type": "array",
-                    "description": "步骤序列：[{tool:\"ui_navigate\",args:{query:\"作业\"}}, …]；from 可把上一步结果注入参数",
+                    "description": "步骤序列：[{tool:\"nav.go\",args:[\"schedule\"]}, …]（tool 是插件门面 ns.method；args 数组=位置参数，对象=单参数）",
                     "items": {
                         "type": "object",
                         "properties": {
                             "tool": { "type": "string" },
-                            "args": { "type": "object" },
+                            "args": { "oneOf": [{ "type": "object" }, { "type": "array" }] },
                             "from": { "type": "object" }
                         },
                         "required": ["tool"]
@@ -784,7 +784,7 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "ext_flow_list",
-        desc: "列出全部 OneFlow（名字 / 触发器 / 上次运行与结果）。",
+        desc: "列出全部 OneFlow（id / 名字 / 触发器 / 是否启用 / 上次运行结果与错误）。",
         params: p(json!({}), &[]),
         confirm: false,
     },
@@ -801,8 +801,20 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: true,
     },
     ToolDef {
+        name: "ext_flow_update",
+        desc: "修改一条 OneFlow：改名 / 改触发方式 / 改步骤 / 启停。定时与事件流程可用 enabled=false 暂停（手动运行不受影响）。id 来自 ext_flow_list。",
+        params: p(json!({
+            "id": { "type": "string", "description": "OneFlow id（来自 ext_flow_list）" },
+            "name": { "type": "string", "description": "新名字（可选）" },
+            "trigger": { "type": "object", "description": "新触发器（可选；同 ext_flow_create）" },
+            "steps": { "type": "array", "description": "新步骤序列（可选）", "items": { "type": "object" } },
+            "enabled": { "type": "boolean", "description": "false = 停用定时/事件触发（可选）" }
+        }), &["id"]),
+        confirm: false,
+    },
+    ToolDef {
         name: "ext_tool_create",
-        desc: "把你刚才用得顺手的**一串工具调用**固化成一个命名工具（用户自定义技能）：之后 ext_tool_run 一步执行。steps 语法与 ext_flow_create 相同（无触发器）。",
+        desc: "把你刚才用得顺手的**一串插件门面调用**固化成一个命名工具（用户自定义技能）：之后 ext_tool_run 一步执行。steps 语法与 ext_flow_create 相同（无触发器）：tool 写 ns.method（如 nav.go / ext.onePageAddAtom），args 推荐数组（按位置参数展开）或单参数对象。",
         params: json!({
             "type": "object",
             "properties": {
@@ -810,8 +822,8 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "description": { "type": "string", "description": "一句话说明它做什么（会出现在工具列表里）" },
                 "steps": {
                     "type": "array",
-                    "description": "步骤序列（同 OneFlow steps）",
-                    "items": { "type": "object", "properties": { "tool": { "type": "string" }, "args": { "type": "object" }, "from": { "type": "object" } }, "required": ["tool"] }
+                    "description": "步骤序列（同 OneFlow steps：args 数组=位置参数、对象=单参数）",
+                    "items": { "type": "object", "properties": { "tool": { "type": "string" }, "args": { "oneOf": [{ "type": "object" }, { "type": "array" }] }, "from": { "type": "object" } }, "required": ["tool"] }
                 }
             },
             "required": ["name", "description", "steps"]
@@ -908,7 +920,7 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "ext_onepage_list",
-        desc: "列出全部 OnePage（id/名字/类型）。往某块 OnePage 放组件前先查 id。",
+        desc: "列出全部 OnePage（id / 名字 / 类型 / 图标）。往某块 OnePage 放组件或换图标前先查 id。",
         params: p(json!({}), &[]),
         confirm: false,
     },
@@ -951,11 +963,12 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "onePage_write",
-        desc: "编辑已存在的 OnePage（用户白板）：op 四选一——\"rename\" 改名（needs name）；\"delete\" 删除（板与内容永久消失，高危）；\"open\" 打开为当前标签页；\"items\" 列出板上的组件 id 与格位（配合 onePage_place 调位 / 删除）。id 来自 ext_onepage_list。",
+        desc: "编辑已存在的 OnePage（用户白板）：op 五选一——\"rename\" 改名（needs name）；\"icon\" 换图标（needs icon，图标键如 fist/star/pin/book/orb/learn/schedule/pen/check/flag/calendar/bell/file/search/info/card/refresh/external/xk/thos/download/inbox）；\"delete\" 删除（板与内容永久消失，高危，**执行前会请用户确认**）；\"open\" 打开为当前标签页；\"items\" 列出板上的组件 id 与格位（配合 onePage_place 调位 / 删除）。id 来自 ext_onepage_list。",
         params: p(json!({
-            "op": { "type": "string", "description": "rename | delete | open | items" },
+            "op": { "type": "string", "description": "rename | icon | delete | open | items" },
             "id": { "type": "string", "description": "OnePage id" },
-            "name": { "type": "string", "description": "op=rename 时的新名字" }
+            "name": { "type": "string", "description": "op=rename 时的新名字" },
+            "icon": { "type": "string", "description": "op=icon 时的图标键" }
         }), &["op", "id"]),
         confirm: false,
     },
@@ -973,9 +986,9 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "onePage_collect",
-        desc: "把一颗原子收进**首页**或指定的 OnePage（白板）—— 收藏「元素」选落点用的就是它。不给 boardId = 落首页（用户回到首页直接看到它，可拖动/改大小）；给 boardId = 落那块已有 OnePage。atomKey 是原子引用 <kind>:<key>（来自 list_favorite_kinds / nav.searchAtoms / 收藏夹），boardId 来自 ext_onepage_list。同一块板上已有同一颗原子时不会重复放（返回 duplicate，如实说「已经有了」而不是假装收进去了）。",
+        desc: "把一颗原子收进**首页**或指定的 OnePage（白板）—— 收藏「元素」选落点用的就是它。不给 boardId = 落首页（用户回到首页直接看到它，可拖动/改大小）；给 boardId = 落那块已有 OnePage。atomKey 是原子引用 **kind|key**（也接受 kind:key，内部归一；key 从 nav.searchAtoms / 打开的页面原子拿，不是 list_favorite_kinds——它只返回 kind），boardId 来自 ext_onepage_list。同一块板上已有同一颗原子时不会重复放（返回 duplicate，如实说「已经有了」而不是假装收进去了）。",
         params: p(json!({
-            "atomKey": { "type": "string", "description": "原子引用 <kind>:<key>，如 course:123 / thos:xxx" },
+            "atomKey": { "type": "string", "description": "原子引用 kind|key（兼容 kind:key），如 course|123 / thos|xxx" },
             "boardId": { "type": "string", "description": "目标 OnePage id；不传 = 落首页" }
         }), &["atomKey"]),
         confirm: false,
@@ -991,7 +1004,7 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "workspace_write",
-        desc: "工作区管理：op=list 列全部工作区（id/名字/是否活板/成员数）；op=create 新建（给 name；可选 tabIds 成员标签数组，不给就把当前页签存档，再不行建一块空活底板）；op=bring 打开为当前工作组；op=collapse 收起活板回到 OneGO 抽屉；op=spread 解除工作区（成组标签复位为散标签，板的定义消失但标签还在，多数场景用这个）。id 来自 op=list。",
+        desc: "工作区管理：op=list 列全部工作区（id/名字/是否活板/成员数）；op=create 新建（给 name；可选 tabIds 成员标签数组，不给就把当前页签存档，再不行建一块空活底板）；op=bring 打开为当前工作组；op=collapse **只折叠**活板（成员标签保留、工作区定义保留）；op=spread 解除工作区（成组标签复位为散标签，板的定义消失但标签还在）。注意：真正关闭活板（关成员标签并删除定义）是 ext_workspace_delete，别拿 collapse 当关闭用。id 来自 op=list。",
         params: p(json!({
             "op": { "type": "string", "description": "list | create | bring | collapse | spread" },
             "name": { "type": "string", "description": "op=create 时的名字" },
@@ -1001,8 +1014,14 @@ pub fn all_tools() -> Vec<ToolDef> {
         confirm: false,
     },
     ToolDef {
+        name: "ext_workspace_delete",
+        desc: "删除工作区定义（活板会关闭其成员标签；已存档工作区只删定义、不关标签）。执行前会请用户确认。id 来自 workspace_write op=list。",
+        params: p(json!({ "id": { "type": "string", "description": "工作区 id" } }), &["id"]),
+        confirm: true,
+    },
+    ToolDef {
         name: "ext_tab",
-        desc: "标签页管理：op=list 列当前全部标签（id/标题/页）；op=open 开新一级标签页（page 可用 today/learn/schedule/info/life/reserve/mail/cloud/gitlab/thubook/tasks/services/favs/boards/board 等）；op=focus 跳到某个已有标签；op=duplicate 再开一个同页同参的标签。",
+        desc: "标签页管理：op=list 列当前全部标签（id/标题/页）；op=open 开新标签页（页面 id 见 navigate；homepage 的旧别名 today 也认；网络学堂子页/详情页同样可开）；op=focus 跳到某个已有标签；op=duplicate 再开一个同页同参的标签。",
         params: p(json!({
             "op": { "type": "string", "description": "list | open | focus | duplicate" },
             "page": { "type": "string", "description": "op=open 时的页面名" },
@@ -1018,19 +1037,19 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "ext_wallpaper",
-        desc: "读取或设置壁纸：不带 ref 就是读当前（全屏档与当前标签档）；带 ref 则设置。scope=global 改全屏档（整个软件底色）；scope=tab 只改当前标签页。ref 可选内置：builtin:aurora（极光）/ builtin:dusk（暮色）/ builtin:matcha（抹茶）/ builtin:ink（墨）；传 null 或 \"\" 清除档位回落默认。本地图片/视频不动 OH——请用户在 设置→壁纸 的库里上传与点选。",
+        desc: "读取或设置壁纸：不带 ref 就是读当前；带 ref 则设置。scope 只支持 global（全屏档；分标签壁纸已退役，scope=tab 会报错）。ref 可选内置：builtin:aurora（极光）/ builtin:dusk（暮色）/ builtin:matcha（抹茶）/ builtin:ink（墨）；传 null 或 \"\" 清除档位回落默认。本地图片/视频不动 OH——请用户在 设置→壁纸 的库里上传与点选。",
         params: p(json!({
-            "scope": { "type": "string", "description": "global | tab" },
+            "scope": { "type": "string", "description": "global（只支持全屏档）" },
             "ref": { "type": ["string", "null"], "description": "壁纸引用；缺省则只读当前" }
-        }), &["scope"]),
+        }), &[]),
         confirm: false,
     },
     ToolDef {
         name: "ext_voice",
-        desc: "OH 语音设置：调音色与朗读。字段全部可选——autoSpeak（true 自动朗读 OH 回复 / false 静音）、backend（\"system\" 系统音 / \"neural\" 神经音色）、voiceName（音色名，空串=引擎默认）、pitch（0.5~2 语调）、rate（0.5~2 语速）。返回调整后的完整当前值。",
+        desc: "OH 语音设置：调音色与朗读。字段全部可选——autoSpeak（true 自动朗读 OH 回复 / false 静音）、backend（目前只支持 \"system\"；\"neural\" 是预留档，传了也会被自愈回 system）、voiceName（音色名，空串=引擎默认）、pitch（0.5~2 语调）、rate（0.5~2 语速）。返回调整后的完整当前值。",
         params: p(json!({
             "autoSpeak": { "type": "boolean" },
-            "backend": { "type": "string", "description": "system | neural" },
+            "backend": { "type": "string", "description": "system（neural 预留，未实现）" },
             "voiceName": { "type": "string" },
             "pitch": { "type": "number" },
             "rate": { "type": "number" }
@@ -1039,10 +1058,9 @@ pub fn all_tools() -> Vec<ToolDef> {
     },
     ToolDef {
         name: "ext_prefs",
-        desc: "外观与一般偏好小开关：capsuleTap（点底部胶囊默认开「search」搜索还是「oh」对话）、voiceTarget（长按语音识别默认发到哪）。leaf 字段可选；返回当前值。",
+        desc: "外观与一般偏好小开关：capsuleTap（点底部胶囊默认开「search」搜索还是「oh」对话）。字段可选；返回当前值。voiceTarget 已废弃（长按语音固定进 OH），不要用。",
         params: p(json!({
-            "capsuleTap": { "type": "string", "description": "search | oh" },
-            "voiceTarget": { "type": "string", "description": "search | oh" }
+            "capsuleTap": { "type": "string", "description": "search | oh" }
         }), &[]),
         confirm: false,
     },
@@ -1728,7 +1746,8 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     /* —— 用户扩展层元工具：全部转发 TS 侧 ext 命名空间（持久化与执行器在 TS）—— */
     if name == "ext_flow_create" {
         let out = host(ctx, "ext", "flowCreate", json!([s(args, "name"), args.get("trigger").cloned().unwrap_or(json!({"kind":"manual"})), args.get("steps").cloned().unwrap_or(json!([]))]))?;
-        return Ok(ToolOut::Text(format!("OneFlow 已创建并生效：{}", out)));
+        let id = out.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        return Ok(ToolOut::Text(format!("OneFlow 已创建并生效（id={id}）。")));
     }
     if name == "ext_flow_list" {
         let out = host(ctx, "ext", "flowList", json!([]))?;
@@ -1738,8 +1757,17 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         let out = host(ctx, "ext", "flowRun", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text(out.to_string()));
     }
+    if name == "ext_flow_update" {
+        let id = s(args, "id");
+        let mut patch = serde_json::Map::new();
+        for k in ["name", "trigger", "steps", "enabled"] {
+            if let Some(v) = args.get(k) { patch.insert(k.to_string(), v.clone()); }
+        }
+        host(ctx, "ext", "flowUpdate", json!([id, serde_json::Value::Object(patch)]))?;
+        return Ok(ToolOut::Text("OneFlow 已更新。".into()));
+    }
     if name == "ext_flow_delete" {
-        let out = host(ctx, "ext", "flowDelete", json!([s(args, "id")]))?;
+        host(ctx, "ext", "flowDelete", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text("OneFlow 已删除。".into()));
     }
     if name == "ext_tool_create" {
@@ -1866,8 +1894,37 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 host(ctx, "ext", "onePageRename", json!([id, nm]))?;
                 return Ok(ToolOut::Text("已改名。".into()));
             }
+            "icon" => {
+                let ic = s(args, "icon");
+                if ic.is_empty() {
+                    return Ok(ToolOut::Text("换图标需要 icon（图标键来自 FOLDER_ICONS，如 fist/book/orb/star）。".into()));
+                }
+                host(ctx, "ext", "onePageSetIcon", json!([id, ic]))?;
+                return Ok(ToolOut::Text(format!("图标已换成 {ic}。")));
+            }
             "delete" => {
-                host(ctx, "ext", "onePageDelete", json!([id]))?;
+                if id.is_empty() {
+                    return Ok(ToolOut::Text("删除需要 id（来自 ext_onepage_list）。".into()));
+                }
+                /* 高危且不可恢复：单独走确认卡（本工具整体 confirm:false，不能靠通用标记）。 */
+                if !confirmed {
+                    return Ok(ToolOut::ConfirmNeeded {
+                        tool: name.into(),
+                        args: args.clone(),
+                        summary: format!("删除 OnePage「{id}」：板和里面的全部组件会永久消失，不能撤销。"),
+                    });
+                }
+                let v = host(ctx, "ext", "onePageDelete", json!([id]))?;
+                if v.get("ok").and_then(|x| x.as_bool()) == Some(false) {
+                    let reason = v.get("reason").and_then(|x| x.as_str()).unwrap_or("");
+                    let msg = match reason {
+                        "system-board" => "系统板（首页）不能删除。",
+                        "last-board" => "至少保留一块 OnePage，不能删最后一块。",
+                        "not-found" => "没有这块 OnePage（id 对照 ext_onepage_list）。",
+                        _ => "删除没有落实：先用 ext_onepage_list 核对 id。",
+                    };
+                    return Ok(ToolOut::Text(msg.into()));
+                }
                 return Ok(ToolOut::Text("OnePage 已删除（板和内容都清了）。".into()));
             }
             "open" => {
@@ -1895,7 +1952,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                     .unwrap_or_default();
                 return Ok(ToolOut::Text(if rows.is_empty() { "这块板还没有组件（onePage_place 只动已有件；放新件用 ext_onepage_add）。".into() } else { rows.join("\n") }));
             }
-            _ => return Ok(ToolOut::Text("op 必须是 rename/delete/open/items。".into())),
+            _ => return Ok(ToolOut::Text("op 必须是 rename/icon/delete/open/items。".into())),
         }
     }
     if name == "onePage_place" {
@@ -1903,8 +1960,11 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         let board = s(args, "boardId");
         let item = s(args, "itemId");
         if op == "move" {
+            if board.is_empty() || item.is_empty() {
+                return Ok(ToolOut::Text("move 需要 boardId + itemId（来自 onePage_write op=items）。".into()));
+            }
             host(ctx, "ext", "onePageMoveItem", json!([board, item, n(args, "x"), n(args, "y")]))?;
-            return Ok(ToolOut::Text("组件已挪位。".into()));
+            return Ok(ToolOut::Text(format!("组件已挪到 ({}, {})。", n(args, "x"), n(args, "y"))));
         }
         if op == "remove" {
             host(ctx, "ext", "onePageRemoveItem", json!([board, item]))?;
@@ -1918,7 +1978,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         let key = s(args, "atomKey").trim().to_string();
         if key.is_empty() {
             return Ok(ToolOut::Text(
-                "缺 atomKey：原子引用形如 course:123 / thos:xxx（可用 list_favorite_kinds，或先 nav.searchAtoms 找）。".into(),
+                "缺 atomKey：原子引用形如 course|123 / thos|xxx（key 用 nav.searchAtoms 找；list_favorite_kinds 只给 kind）。".into(),
             ));
         }
         let board = s(args, "boardId").trim().to_string();
@@ -2036,23 +2096,23 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 return Ok(ToolOut::Text(format!("工作区已创建（id={id}）。")));
             }
             "bring" => {
-                host(ctx, "ext", "workspaceOpen", json!([s(args, "id")]))?;
-                return Ok(ToolOut::Text("已打开为当前工作组。".into()));
+                let ok = host(ctx, "ext", "workspaceOpen", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "已打开为当前工作组。".into() } else { "没有这个工作区（id 对照 op=list）。".into() }));
             }
             "collapse" => {
-                host(ctx, "ext", "workspaceClose", json!([s(args, "id")]))?;
-                return Ok(ToolOut::Text("活板已收起。".into()));
+                let ok = host(ctx, "ext", "workspaceCollapse", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "活板已收起（成员标签保留）。".into() } else { "没有这个活板（id 对照 op=list）。".into() }));
             }
             "spread" => {
-                host(ctx, "ext", "workspaceDissolve", json!([s(args, "id")]))?;
-                return Ok(ToolOut::Text("工作区已解除（成组标签复位为散标签）。".into()));
+                let ok = host(ctx, "ext", "workspaceDissolve", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "工作区已解除（成组标签复位为散标签）。".into() } else { "没有这个工作区（id 对照 op=list）。".into() }));
             }
             _ => return Ok(ToolOut::Text("op 必须是 list/create/bring/collapse/spread。删除已存档的工作区用 ext_workspace_delete。".into())),
         }
     }
     if name == "ext_workspace_delete" {
-        host(ctx, "ext", "workspaceDelete", json!([s(args, "id")]))?;
-        return Ok(ToolOut::Text("工作区定义已删除。".into()));
+        let ok = host(ctx, "ext", "workspaceDelete", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "工作区定义已删除。".into() } else { "没有这个工作区（id 对照 workspace_write op=list）。".into() }));
     }
     if name == "ext_tab" {
         let op = s(args, "op");
@@ -2081,8 +2141,8 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 return Ok(ToolOut::Text(format!("新标签已打开（id={id}）。")));
             }
             "focus" => {
-                host(ctx, "ext", "tabFocus", json!([s(args, "id")]))?;
-                return Ok(ToolOut::Text("已跳到该标签。".into()));
+                let ok = host(ctx, "ext", "tabFocus", json!([s(args, "id")]))?;
+                return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "已跳到该标签。".into() } else { "没有这个标签（id 用 op=list 查）。".into() }));
             }
             "duplicate" => {
                 let out = host(ctx, "ext", "tabDuplicate", json!([s(args, "id")]))?;
@@ -2093,8 +2153,8 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         }
     }
     if name == "ext_tab_close" {
-        host(ctx, "ext", "tabClose", json!([s(args, "id")]))?;
-        return Ok(ToolOut::Text("标签已关闭。".into()));
+        let ok = host(ctx, "ext", "tabClose", json!([s(args, "id")]))?;
+        return Ok(ToolOut::Text(if ok.as_bool() == Some(true) { "标签已关闭。".into() } else { "没关掉：首页不可关，或这个标签不存在。".into() }));
     }
     if name == "ext_wallpaper" {
         if let Some(r) = args.get("ref").cloned() {
@@ -2117,7 +2177,6 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     }
     if name == "ext_prefs" {
         host(ctx, "ext", "prefSet", json!([args.get("capsuleTap").cloned().map(|v| json!({ "capsuleTap": v })).unwrap_or(json!({}))]))?;
-        host(ctx, "ext", "prefSet", json!([args.get("voiceTarget").cloned().map(|v| json!({ "voiceTarget": v })).unwrap_or(json!({}))]))?;
         let out = host(ctx, "ext", "prefGet", json!([]))?;
         return Ok(ToolOut::Text(serde_json::to_string_pretty(&out).unwrap_or_default()));
     }
@@ -3370,7 +3429,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
         "navigate" => {
             let params = args.get("params").cloned().unwrap_or(json!({}));
             let ok = host(ctx, "nav", "go", json!([s(args, "page"), params]))?;
-            json!({ "navigated": ok })
+            json!({ "navigated": ok.as_bool().unwrap_or(false) })
         }
         "ui_navigate" => {
             let table = routes_assets();
@@ -3467,7 +3526,7 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 "state": mcp_state_text(on, listening, port),
                 "exposedTools": exposed,
                 "withheldTools": withheld,
-                "switchPath": "设置 → 插件 → OneTHU Harness → 高级配置 → 「OH MCP 服务器」开关",
+                "switchPath": "设置浮层 → OneTHU Harness 段 → 高级配置 → 「OH MCP 服务器」开关",
                 "takeEffect": "拨完开关后发一条消息或重开 OH 即生效（每轮对话同步一次闸门）",
                 "clientSetup": "别的 MCP 客户端（Claude Desktop / 脚本 / 编辑器插件）把地址填成 endpoint（Streamable-HTTP，POST JSON-RPC：initialize / tools/list / tools/call）；仅本机回环，不跨机",
                 "whenOff": "关着时任何连接一律 403 并说明未开启（不是超时、也不是空工具表）",

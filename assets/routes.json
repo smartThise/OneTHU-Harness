@@ -1,5 +1,29 @@
 [
   {
+    "id": "oh-root",
+    "title": "OneTHU Harness / 小OH 设置",
+    "desc": "OH 的基础设置与高级配置入口",
+    "aliases": [
+      "小OH",
+      "OH 设置",
+      "OH",
+      "Harness",
+      "助手设置"
+    ],
+    "breadcrumb": [
+      "插件",
+      "OneTHU Harness",
+      "入口",
+      "OneTHU Harness / 小OH 设置"
+    ],
+    "kind": "oh",
+    "tier": "basic",
+    "view": "",
+    "tab": "OneTHU Harness",
+    "section": "入口",
+    "note": ""
+  },
+  {
     "id": "oh-madmodel",
     "title": "MadModel 免费档",
     "desc": "额度不足或过期时点重新签一次",
@@ -460,7 +484,7 @@
     "view": "",
     "tab": "桌面小组件",
     "section": "桌面小组件",
-    "note": ""
+    "note": "「小组件槽位」仅 Android 版可用；已到「桌面小组件」。"
   },
   {
     "id": "set-theme-board",
@@ -554,11 +578,12 @@
   {
     "id": "set-appearance",
     "title": "外观",
-    "desc": "密度、字号、圆角等外观项",
+    "desc": "主题、标签栏、玻璃程度、取色等外观项",
     "aliases": [
       "密度",
       "字号",
-      "圆角"
+      "圆角",
+      "主题色"
     ],
     "breadcrumb": [
       "设置",
@@ -572,6 +597,212 @@
     "tab": "外观与布局",
     "section": "外观",
     "note": ""
+  },
+  {
+    "id": "set-wallpaper",
+    "title": "壁纸",
+    "desc": "全窗壁纸库、上传与动态壁纸声音",
+    "aliases": [
+      "墙纸",
+      "背景",
+      "背景图",
+      "动态壁纸",
+      "上传壁纸",
+      "壁纸库"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "壁纸"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-wallpaper-sound",
+    "title": "动态壁纸声音",
+    "desc": "视频壁纸有声时是否放开声音",
+    "aliases": [
+      "视频壁纸声音",
+      "壁纸静音"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "动态壁纸声音"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-tabbar-style",
+    "title": "标签栏样式",
+    "desc": "横版顶部标签 / 竖版左侧标签",
+    "aliases": [
+      "标签栏",
+      "竖栏",
+      "横栏",
+      "标签栏默认"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "标签栏样式"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-glass-level",
+    "title": "玻璃程度",
+    "desc": "全站玻璃面材浓度四档",
+    "aliases": [
+      "玻璃",
+      "材质",
+      "毛玻璃",
+      "透明",
+      "透彻",
+      "玻璃质感"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "玻璃程度"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-dyn-color",
+    "title": "跟随系统取色",
+    "desc": "用壁纸颜色重算全站配色",
+    "aliases": [
+      "动态取色",
+      "壁纸取色",
+      "系统取色",
+      "动态颜色"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "外观",
+      "跟随系统取色"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "外观",
+    "note": ""
+  },
+  {
+    "id": "set-capsule-tap",
+    "title": "点击胶囊默认打开",
+    "desc": "点胶囊默认进搜索还是 OH 对话",
+    "aliases": [
+      "胶囊",
+      "胶囊默认动作",
+      "搜索与胶囊",
+      "底栏胶囊"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "工作空间",
+      "点击胶囊默认打开"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "工作空间",
+    "note": ""
+  },
+  {
+    "id": "set-search-history",
+    "title": "最近搜索记录",
+    "desc": "保留最近 10 条搜索记录，可清空",
+    "aliases": [
+      "搜索历史",
+      "清空搜索记录"
+    ],
+    "breadcrumb": [
+      "设置",
+      "外观与布局",
+      "工作空间",
+      "最近搜索记录"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "外观与布局",
+    "section": "工作空间",
+    "note": ""
+  },
+  {
+    "id": "set-geek",
+    "title": "极客模式（浏览器探索）",
+    "desc": "浏览器探索开关、环境下载与启动方式",
+    "aliases": [
+      "极客",
+      "探索浏览器",
+      "playwright",
+      "浏览器自动化"
+    ],
+    "breadcrumb": [
+      "设置",
+      "桌面小组件",
+      "极客模式",
+      "极客模式（浏览器探索）"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "桌面小组件",
+    "section": "极客模式",
+    "note": ""
+  },
+  {
+    "id": "set-geek-download",
+    "title": "探索浏览器环境",
+    "desc": "一键下载/检查 Playwright 浏览器与独立 profile",
+    "aliases": [
+      "playwright 下载",
+      "下载浏览器",
+      "浏览器环境"
+    ],
+    "breadcrumb": [
+      "设置",
+      "桌面小组件",
+      "极客模式",
+      "探索浏览器环境"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "桌面小组件",
+    "section": "极客模式",
+    "note": "下载/检查在「极客模式（浏览器探索）」行下方的环境卡里；已带到「极客模式」分节。"
   },
   {
     "id": "set-home-layout",
@@ -1022,10 +1253,11 @@
   {
     "id": "plg-mine-market",
     "title": "我的插件 / 插件市场",
-    "desc": "插件页两个视图切换",
+    "desc": "在「我的插件」与「插件市场」两个视图间切换",
     "aliases": [
       "插件列表",
-      "插件市场"
+      "插件市场",
+      "视图切换"
     ],
     "breadcrumb": [
       "插件",
@@ -1038,6 +1270,49 @@
     "tab": "插件",
     "section": "我的插件",
     "note": ""
+  },
+  {
+    "id": "plg-market-search",
+    "title": "插件市场搜索",
+    "desc": "在插件市场里按名字/说明搜索",
+    "aliases": [
+      "搜插件",
+      "插件搜索",
+      "市场搜索框"
+    ],
+    "breadcrumb": [
+      "插件",
+      "插件市场",
+      "插件市场搜索"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "market",
+    "tab": "插件",
+    "section": "插件市场",
+    "note": "搜索框在插件市场顶部；已带到市场视图，直接在顶部输入即可。"
+  },
+  {
+    "id": "plg-market-cat",
+    "title": "插件分类筛选",
+    "desc": "插件市场的「全部 / 主题 / 通用」筛选",
+    "aliases": [
+      "全部",
+      "主题",
+      "通用",
+      "插件分类"
+    ],
+    "breadcrumb": [
+      "插件",
+      "插件市场",
+      "插件分类筛选"
+    ],
+    "kind": "plugins",
+    "tier": "",
+    "view": "market",
+    "tab": "插件",
+    "section": "插件市场",
+    "note": "分类筛选按钮在插件市场列表上方；已带到市场视图。"
   },
   {
     "id": "plg-install",

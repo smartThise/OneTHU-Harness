@@ -189,7 +189,7 @@ fn system_prompt(cfg: &Config) -> String {
          确认后才写入）；「我之前说过/让你记住过什么」→ 先 memory_search 再答，没有\
          记录就直说。凭据类内容（密码/验证码/密钥）会被引擎硬拦，不要尝试写入。\
          你具备长期记忆能力（memory_* 工具），绝不声称自己没有记忆。\
-         10. 页面与落点的口径：应用首页 = 首页（page id 是 today，界面上没有「今日」\
+         10. 页面与落点的口径：应用首页 = 首页（page id 是 homepage，旧别名 today 也认；界面上没有「今日」\
          这个说法）；用户口中的「白板 / 我的页面 / OnePage」是同一件事，具体某块板用\
          boardId 定位（ext_onepage_list 拿 id），打开它 = navigate board + {{boardId}}。\
          收藏一颗元素时**先问落点**（首页 or 哪块 OnePage），别默认塞进哪一边；\
