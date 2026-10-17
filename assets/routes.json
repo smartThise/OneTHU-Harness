@@ -487,6 +487,52 @@
     "note": "「小组件槽位」仅 Android 版可用；已到「桌面小组件」。"
   },
   {
+    "id": "set-namecard",
+    "title": "我的 OneTHU 名片",
+    "desc": "头像、网址、社交、手机号、简介",
+    "aliases": [
+      "名片",
+      "头像",
+      "个人简介",
+      "社交媒体",
+      "个人网址"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "我的 OneTHU 名片",
+      "我的 OneTHU 名片"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "我的 OneTHU 名片",
+    "note": ""
+  },
+  {
+    "id": "set-contacts",
+    "title": "通讯录",
+    "desc": "收到的个人/组织名片",
+    "aliases": [
+      "联系人",
+      "好友",
+      "组织名片"
+    ],
+    "breadcrumb": [
+      "设置",
+      "账号",
+      "我的 OneTHU 名片",
+      "通讯录"
+    ],
+    "kind": "settings",
+    "tier": "",
+    "view": "",
+    "tab": "账号",
+    "section": "我的 OneTHU 名片",
+    "note": ""
+  },
+  {
     "id": "set-theme-board",
     "title": "主题",
     "desc": "只列已启用主题，点「应用」切换",
