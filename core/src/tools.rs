@@ -1225,6 +1225,17 @@ pub fn all_tools() -> Vec<ToolDef> {
         }), &["id", "name", "version", "repo", "entry"]),
         confirm: true,
     },
+    /* ── 临时来访人员报备（2026-10-19 用户：这东西应该是自动的，且 OH 能操作）── */
+    ToolDef {
+        name: "visit_fill",
+        desc: "临时来访人员报备（亲友来访）：把用户口述的信息填进报备表单并打开预约页。默认只填草稿让用户核对；**用户明确说「直接提交 / 自动报备 / 不用我点」时传 submit:true**，页面填好后自动提交（真实政务动作，成功后记入「我的报备」）。patch 字段：visitDate(YYYY-MM-DD)、category、area、reason、reasonText、inviterName、inviterMobile、inviterIdCard、quota、passcode、visitors[{name,idCard,mobile,gate,plate,org}]。",
+        params: p(json!({
+            "patch": { "type": "object", "description": "要填的报备字段（至少 visitDate / 来访人姓名+身份证+手机号）" },
+            "submit": { "type": "boolean", "description": "true = 填完自动提交（默认 false 只填草稿）" },
+            "open": { "type": "boolean", "description": "false = 只填不跳页（默认 true 打开预约页）" }
+        }), &["patch"]),
+        confirm: false,
+    },
     ToolDef {
         name: "add_favorite",
         desc: "把一条信息收进用户收藏夹（万物原子化）。key 为稳定引用标识（建议 fav:<毫秒时间戳>），title 为收藏卡片显示的标题（必填），note 为补充说明（可选，显示在第二行）。收藏后用户在收藏夹页可见，点击会提示来源。",
@@ -1785,6 +1796,20 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
     if name == "ext_tool_delete" {
         let out = host(ctx, "ext", "toolDelete", json!([s(args, "id")]))?;
         return Ok(ToolOut::Text("用户工具已删除。".into()));
+    }
+    if name == "visit_fill" {
+        let patch = args.get("patch").cloned().unwrap_or_else(|| json!({}));
+        let opts = json!({
+            "open": args.get("open").cloned().unwrap_or(json!(true)),
+            "submit": args.get("submit").cloned().unwrap_or(json!(false))
+        });
+        let out = host(ctx, "visit", "fill", json!([patch, opts]))?;
+        let submit = args.get("submit").and_then(|v| v.as_bool()).unwrap_or(false);
+        return Ok(ToolOut::Text(if submit {
+            format!("来访报备已按你的要求自动提交；提交结果可在预约页「我的报备」核对。原始返回：{}", out)
+        } else {
+            format!("来访报备已填好草稿并打开预约页，用户核对后点「提交报备」。原始返回：{}", out)
+        }));
     }
     if name == "ext_theme_apply" {
         let out = host(ctx, "ext", "themeApply", json!([s(args, "name"), args.get("vars").cloned().unwrap_or(json!({}))]))?;
