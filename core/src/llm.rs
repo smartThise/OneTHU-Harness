@@ -4,7 +4,9 @@
 use crate::host::Host;
 use crate::usage::ApiUsage;
 use serde_json::{json, Value};
-use std::io::BufRead;
+#[path = "llm_transport.rs"]
+mod transport;
+use transport::Failure;
 
 pub struct ToolCall {
     pub id: String,
@@ -36,79 +38,6 @@ pub struct LlmError {
 impl From<String> for LlmError {
     fn from(s: String) -> Self {
         LlmError { message: s }
-    }
-}
-
-static DIRECT_AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
-static PROXY_AGENT: std::sync::OnceLock<Option<ureq::Agent>> = std::sync::OnceLock::new();
-
-fn build_agent(proxy: Option<ureq::Proxy>) -> ureq::Agent {
-    let b = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(15))
-        // 单次 socket 读的空闲上限：首 token / 流间歇都受它约束——
-        // 端点悬挂（错误模型名、假端点）最多 75s 必报错，而不是无限等
-        .timeout_read(std::time::Duration::from_secs(75))
-        .user_agent("OneTHU-Harness/0.1");
-    match proxy {
-        Some(p) => b.proxy(p),
-        None => b,
-    }
-    .build()
-}
-
-/// 按请求 host 选 agent：标准代理环境变量（curl 语义）——https 请求优先
-/// HTTPS_PROXY/https_proxy，再 ALL_PROXY；NO_PROXY 后缀匹配豁免。
-/// curl/Node 系客户端都遵循此约定，ureq 默认不读——同 API 下应用直连被慢
-/// 线路拖住而别的客户端走代理，就是这个差异。
-fn agent_for(base_url: &str) -> ureq::Agent {
-    let host = base_url
-        .split("://")
-        .nth(1)
-        .unwrap_or("")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_string();
-    let no_proxy = std::env::var("NO_PROXY")
-        .or_else(|_| std::env::var("no_proxy"))
-        .unwrap_or_default();
-    let exempt = no_proxy.split(',').any(|d| {
-        let d = d.trim().trim_start_matches('.');
-        !d.is_empty() && (host == d || host.ends_with(&format!(".{d}")))
-    });
-    if exempt {
-        return DIRECT_AGENT.get_or_init(|| build_agent(None)).clone();
-    }
-    if let Some(a) = PROXY_AGENT.get_or_init(|| {
-        ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
-            .iter()
-            .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
-            .and_then(|raw| ureq::Proxy::new(raw.trim()).ok())
-            .map(|p| build_agent(Some(p)))
-    }) {
-        return a.clone();
-    }
-    DIRECT_AGENT.get_or_init(|| build_agent(None)).clone()
-}
-
-fn http_err(e: ureq::Error) -> LlmError {
-    match e {
-        ureq::Error::Status(code, resp) => {
-            let body = resp.into_string().unwrap_or_default();
-            let snippet: String = body.chars().take(400).collect();
-            // OpenAI 风格错误尽量抽出 message
-            let msg = serde_json::from_str::<Value>(&snippet)
-                .ok()
-                .and_then(|v| {
-                    v.get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(|m| m.as_str())
-                        .map(String::from)
-                })
-                .unwrap_or(snippet);
-            LlmError { message: format!("LLM HTTP {code}：{msg}") }
-        }
-        ureq::Error::Transport(t) => LlmError { message: format!("LLM 网络错误：{t}") },
     }
 }
 
@@ -145,7 +74,11 @@ pub fn chat_turn(
         "messages": messages.iter().map(|m| m.to_value(cfg.multimodal)).collect::<Vec<_>>(),
         "stream": cfg.stream,
     });
-    let img_n: usize = if cfg.multimodal { messages.iter().map(|m| m.images.len()).sum() } else { 0 };
+    let img_n: usize = if cfg.multimodal {
+        messages.iter().map(|m| m.images.len()).sum()
+    } else {
+        0
+    };
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.to_vec());
         body["tool_choice"] = json!("auto");
@@ -159,7 +92,9 @@ pub fn chat_turn(
         cfg.model,
         messages.len(),
         cfg.stream,
-        body.get("thinking").map(|t| t.to_string()).unwrap_or_else(|| "default".into()),
+        body.get("thinking")
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "default".into()),
         img_n,
         url
     ));
@@ -168,99 +103,106 @@ pub fn chat_turn(
     if let Ok(dp) = std::env::var("ONETHU_DUMP_BODY") {
         let _ = std::fs::write(&dp, &body_s);
     }
-    let api_key = cfg.api_key.clone();
-    let cookie = cfg.madmodel_cookie.clone();
-    let post = move |a: &ureq::Agent| {
-        let req = a
-            .post(&url)
-            .set("Authorization", &format!("Bearer {}", api_key))
-            .set("Content-Type", "application/json");
-        // 校外 webvpn 通道：包装域需要 wengine 会话票。ureq 没有 cookie 仓，
-        // 由宿主在每次对话前的 preflight 里从本机 jar 取出并写进设置。
-        let req = if cookie.is_empty() { req } else { req.set("Cookie", &cookie) };
-        req.send_string(&body_s)
-    };
-    // 快失败竞速（R8）：paratera 等网关是双峰后端（实测首字节 <1s 或 8~30s）。
-    // 流式交互请求首字节 4s 未到即弃线重试（快峰占多数，两次重试后命中快后端 >90%）；
-    // 弃用的连接由分离线程自行结束（读上限 75s）。非流式请求首字节≈完整生成，不适用。
-    let mut resp: Option<Result<ureq::Response, ureq::Error>> = None;
-    // 回环中继通道（校外）不做快失败竞速：3 秒阈值是为「校内直连网关双峰后端」定的，
-    // 校外经 webvpn 首字节实测 5–10s → 三次尝试全被弃线（白烧三次生成，最终仍要走一次
-    // 阻塞请求）。此处直接走阻塞请求，悬挂由 75s 读超时兜底。
-    let via_relay = cfg.base_url.contains("127.0.0.1");
-    if cfg.stream && !via_relay {
-        const FAST_FAIL_MS: u64 = 3000;
-        let mut raced = false;
-        for attempt in 0..3 {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let a = agent_for(&cfg.base_url);
-            let post_t = post.clone();
-            std::thread::spawn(move || {
-                let _ = tx.send(post_t(&a));
-            });
-            match rx.recv_timeout(std::time::Duration::from_millis(FAST_FAIL_MS)) {
-                Ok(r) => {
-                    resp = Some(r);
-                    raced = true;
-                    break;
+    // Host/Hooks need not be Send: the async transport is driven on this same
+    // calling thread. No request threads survive cancellation or a completed turn.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| LlmError {
+            message: format!("LLM 网络运行时初始化失败：{e}"),
+        })?;
+    runtime.block_on(async {
+        let client = transport::client()?;
+        for retry in 0..=transport::MAX_RETRIES {
+            let mut observed_output = false;
+            let attempt =
+                request_once(&client, &url, &body_s, cfg, h, hooks, &mut observed_output).await;
+            let mut failure = match attempt {
+                Ok(turn)
+                    if turn.content.is_empty()
+                        && turn.reasoning.is_empty()
+                        && turn.tool_calls.is_empty() =>
+                {
+                    Failure::new(
+                        "模型无任何输出——请检查「模型」名称与 API Endpoint 是否正确",
+                        true,
+                    )
                 }
-                Err(_) => {
-                    (hooks.on_log)(&format!(
-                        "↻ 首字节超 {FAST_FAIL_MS}ms（慢后端），弃线重试 {}/3",
-                        attempt + 1
-                    ));
-                }
+                Ok(turn) => return Ok(turn),
+                Err(failure) => failure,
+            };
+            // Even buffered content, reasoning, or a partial tool call makes a
+            // replay unsafe. Never emit a second answer over an already started one.
+            if h.interrupted() || observed_output {
+                failure.retryable = false;
             }
-        }
-        let _ = raced;
-    }
-    let resp = match resp {
-        Some(r) => r,
-        None => post(&agent_for(&cfg.base_url)), // 非流式 / 两次竞速都慢：阻塞式兜底
-    };
-    let resp = match resp {
-        Ok(r) => {
+            if let Some(delay) = transport::retry_delay(&mut failure, retry) {
+                transport::log_retry(hooks, retry, delay, &failure);
+                transport::wait_retry(h, delay).await.map_err(|e| e.error)?;
+                continue;
+            }
             (hooks.on_log)(&format!(
-                "← LLM 应答头 HTTP {} · {}ms",
-                r.status(),
-                t0.elapsed().as_millis()
+                "✗ LLM 失败（{}ms）：{}",
+                t0.elapsed().as_millis(),
+                failure.error.message
             ));
-            r
+            return Err(failure.error);
         }
-        Err(e) => {
-            let err = http_err(e);
-            (hooks.on_log)(&format!("✗ LLM 失败（{}ms）：{}", t0.elapsed().as_millis(), err.message));
-            return Err(err);
-        }
-    };
+        unreachable!("bounded retry loop always returns on its final attempt")
+    })
+}
 
-    // 307/HTML 壳（2026-09-19 实测）：MadModel 对校外 IP 全域弹 SSO（IP 门禁在
-    // token 校验之前），ureq 跟随后落到 HTML → JSON 解析报错难懂。给出人话。
-    let status = resp.status();
-    if (status >= 300 && status < 400) || (status == 200 && resp.content_type().to_string().contains("text/html")) {
-        // 包装域回 HTML 与直连被 IP 门禁是两件事：前者是 wengine 把请求弹回登录页
-        // （会话票过期/未注入，宿主据此重签并刷新票据），后者才是校外 IP 拦截。
-        // 校外通道有两种形态：中继（127.0.0.1，宿主内转发）与直接包装域。两者被弹回
-        // 登录页都属「会话失效」，与直连吃 IP 门禁是两件事，文案分开（宿主据此自愈）。
-        let via_channel = cfg.base_url.contains("webvpn.tsinghua.edu.cn") || cfg.base_url.contains("127.0.0.1");
-        let message = if via_channel {
+async fn request_once(
+    client: &reqwest::Client,
+    url: &str,
+    body: &str,
+    cfg: &crate::config::Config,
+    h: &dyn Host,
+    hooks: &mut Hooks<'_>,
+    observed_output: &mut bool,
+) -> Result<Turn, Failure> {
+    let started = std::time::Instant::now();
+    let mut request = client
+        .post(url)
+        .bearer_auth(&cfg.api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_owned());
+    if !cfg.madmodel_cookie.is_empty() {
+        request = request.header(reqwest::header::COOKIE, &cfg.madmodel_cookie);
+    }
+    let response = transport::io(h, transport::HEADER_TIMEOUT, request.send()).await?;
+    let status = response.status();
+    (hooks.on_log)(&format!(
+        "← LLM 应答头 HTTP {} · {}ms",
+        status.as_u16(),
+        started.elapsed().as_millis()
+    ));
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    if status.is_redirection() || (status.is_success() && content_type.contains("text/html")) {
+        let via_channel =
+            cfg.base_url.contains("webvpn.tsinghua.edu.cn") || cfg.base_url.contains("127.0.0.1");
+        let message = if via_channel && cfg.uses_free_tier {
             "webvpn 会话已失效：免费档请求被弹回登录页（校外包装通道）。宿主会自动重签并刷新会话票；若反复出现，请在 设置 → 插件 → OneTHU Harness 重新登录清华账号。"
-        } else {
+        } else if url_contains_madmodel(cfg) {
             "MadModel 拒绝了当前网络（IP 门禁 307，token 校验前就拦截）。该免费服务仅限校园网内 IP：请连校园网/学校 VPN（如 EasyConnect），或在插件设置把模型源切回自费 API。"
+        } else {
+            "模型接口返回了重定向或网页，请检查 API Endpoint 是否为 OpenAI 兼容 API 地址。"
         };
-        return Err(LlmError { message: message.into() });
+        return Err(Failure::new(message, false));
     }
-    if cfg.stream {
-        let ctype = resp.content_type().to_string();
-        if ctype.contains("event-stream") {
-            return stream_turn(resp, hooks, h);
-        }
-        // 端点不支持流式却没报错：按普通 JSON 解析
-        let v: Value = resp.into_json().map_err(|e| LlmError { message: format!("响应解析失败：{e}") })?;
-        return parse_completion(v);
+    if !status.is_success() {
+        return Err(transport::http_failure(response, h).await);
     }
-    let v: Value = resp.into_json().map_err(|e| LlmError { message: format!("响应解析失败：{e}") })?;
-    parse_completion(v)
+    if cfg.stream && content_type.contains("event-stream") {
+        stream_turn(response, hooks, h, observed_output).await
+    } else {
+        parse_completion(transport::json_body(response, h).await?).map_err(Failure::from)
+    }
 }
 
 /// 免费档判定：请求将打向 madmodel（含被回退前的默认 base）
@@ -270,11 +212,21 @@ fn url_contains_madmodel(cfg: &crate::config::Config) -> bool {
 
 fn parse_completion(v: Value) -> Result<Turn, LlmError> {
     if let Some(err) = v.get("error") {
-        return Err(LlmError { message: format!("LLM 错误：{}", err) });
+        return Err(LlmError {
+            message: format!("LLM 错误：{}", err),
+        });
     }
-    let choice = v.get("choices").and_then(|c| c.get(0)).cloned().unwrap_or(Value::Null);
+    let choice = v
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .cloned()
+        .unwrap_or(Value::Null);
     let msg = choice.get("message").cloned().unwrap_or(Value::Null);
-    let mut content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let mut content = msg
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
     // 非流式也要剥 <think> 内联思考（GLM 等端点；剥离后进 reasoning，dock 思考链可见）
     let mut reasoning = msg
         .get("reasoning_content")
@@ -296,30 +248,49 @@ fn parse_completion(v: Value) -> Result<Turn, LlmError> {
                 .filter_map(|tc| {
                     let f = tc.get("function")?;
                     Some(ToolCall {
-                        id: tc.get("id").and_then(|i| i.as_str()).unwrap_or("call_0").to_string(),
+                        id: tc
+                            .get("id")
+                            .and_then(|i| i.as_str())
+                            .unwrap_or("call_0")
+                            .to_string(),
                         name: f.get("name").and_then(|n| n.as_str())?.to_string(),
-                        arguments: f.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}").to_string(),
+                        arguments: f
+                            .get("arguments")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("{}")
+                            .to_string(),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default();
-    let usage = v.get("usage").and_then(|u| serde_json::from_value::<ApiUsage>(u.clone()).ok());
-    Ok(Turn { content, reasoning, tool_calls, usage })
+    let usage = v
+        .get("usage")
+        .and_then(|u| serde_json::from_value::<ApiUsage>(u.clone()).ok());
+    Ok(Turn {
+        content,
+        reasoning,
+        tool_calls,
+        usage,
+    })
 }
 
 /// SSE 流解析：逐块回调 delta/think；tool_calls 按 index 增量拼接
-fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<Turn, LlmError> {
+async fn stream_turn(
+    resp: reqwest::Response,
+    hooks: &mut Hooks<'_>,
+    h: &dyn Host,
+    observed_output: &mut bool,
+) -> Result<Turn, Failure> {
     // 参考 DeepSeek Harness 的块式组装：思考先行（reasoning_content / <think> 内联双兼容），
     // tool_calls 按 index 增量累积；事件按时间窗批处理——逐 token 发事件会把 IPC 与日志刷爆。
-    let reader = resp.into_reader();
-    let mut br = std::io::BufReader::new(reader);
-    let mut line = String::new();
+    let mut lines = transport::Lines::new(resp);
 
     let mut content = String::new();
     let mut reasoning = String::new();
     let mut calls: std::collections::BTreeMap<u64, ToolCall> = std::collections::BTreeMap::new();
     let mut usage: Option<ApiUsage> = None;
+    let mut finished = false;
 
     // <think> 路由态：GLM 等端点把思考以 <think>…</think> 内联在 content 里
     let mut raw = String::new();
@@ -359,7 +330,11 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
                 match rest.find(if in_think { "</think>" } else { "<think>" }) {
                     Some(0) => {
                         in_think = !in_think;
-                        scan += if in_think { "<think>".len() } else { "</think>".len() };
+                        scan += if in_think {
+                            "<think>".len()
+                        } else {
+                            "</think>".len()
+                        };
                     }
                     Some(i) => {
                         let seg = &rest[..i];
@@ -390,7 +365,8 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
                     }
                 }
                 let elapsed = last_flush.elapsed().as_millis();
-                if first_out || elapsed >= BATCH_MS
+                if first_out
+                    || elapsed >= BATCH_MS
                     || delta_buf.len() > 400
                     || think_buf.len() > 400
                 {
@@ -402,14 +378,9 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
     }
 
     loop {
-        // 打断：SSE 逐块检查（R4）
-        if h.interrupted() {
-            flush!();
-            return Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage });
-        }
-        line.clear();
-        match br.read_line(&mut line) {
-            Ok(0) => {
+        let line = match lines.next(h).await {
+            Ok(Some(line)) => line,
+            Ok(None) => {
                 (hooks.on_log)(&format!(
                     "✓ 流读取完毕（EOF）：content {} 字 / tools {}",
                     content.chars().count(),
@@ -417,17 +388,22 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
                 ));
                 break;
             }
-            Ok(_) => {}
-            Ok(_) => {}
-            Err(e) => return Err(LlmError { message: format!("流读取中断：{e}") }),
-        }
+            Err(error) => {
+                pump!(true);
+                flush!();
+                return Err(error);
+            }
+        };
         let t = line.trim();
         if t.is_empty() || t.starts_with(':') {
             continue;
         }
-        let Some(data) = t.strip_prefix("data:") else { continue };
+        let Some(data) = t.strip_prefix("data:") else {
+            continue;
+        };
         let data = data.trim();
         if data == "[DONE]" {
+            finished = true;
             (hooks.on_log)(&format!(
                 "✓ 流读取完毕（[DONE]）：content {} 字 / tools {} / reasoning {} 字",
                 content.chars().count(),
@@ -436,7 +412,9 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
             ));
             break;
         }
-        let Ok(chunk) = serde_json::from_str::<Value>(data) else { continue };
+        let Ok(chunk) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
         // 端点把错误塞进 200 SSE 流（OpenAI 兼容变体）：data: {"error": {...}}
         if let Some(err) = chunk.get("error") {
             let msg = err
@@ -444,16 +422,47 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
                 .and_then(|m| m.as_str())
                 .map(String::from)
                 .unwrap_or_else(|| err.to_string());
-            return Err(LlmError { message: format!("LLM 错误：{msg}") });
+            pump!(true);
+            flush!();
+            let code = err.get("code").or_else(|| err.get("type"));
+            let retryable = code.is_some_and(|c| {
+                matches!(c.as_u64(), Some(408 | 429 | 500..=599))
+                    || matches!(
+                        c.as_str(),
+                        Some(
+                            "rate_limit_exceeded" | "server_error" | "timeout" | "overloaded_error"
+                        )
+                    )
+            });
+            let label = code
+                .map(|c| {
+                    c.as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| c.to_string())
+                })
+                .unwrap_or_else(|| "unknown".into());
+            return Err(Failure::new(
+                format!("LLM 错误（{label}）：{msg}"),
+                retryable,
+            ));
         }
         if let Some(u) = chunk.get("usage").filter(|u| u.is_object()) {
             usage = serde_json::from_value::<ApiUsage>(u.clone()).ok();
         }
-        let Some(choice) = chunk.get("choices").and_then(|c| c.get(0)) else { continue };
-        if choice.get("finish_reason").and_then(|f| f.as_str()).is_some() {
+        let Some(choice) = chunk.get("choices").and_then(|c| c.get(0)) else {
+            continue;
+        };
+        if choice
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .is_some()
+        {
+            finished = true;
             // finish_reason 出现后通常还有 usage 尾包，不 break，等 [DONE]/EOF
         }
-        let Some(delta) = choice.get("delta") else { continue };
+        let Some(delta) = choice.get("delta") else {
+            continue;
+        };
         // 思考：DeepSeek 系 reasoning_content / 部分网关 reasoning 字段
         if let Some(rc) = delta
             .get("reasoning_content")
@@ -461,6 +470,7 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
             .and_then(|c| c.as_str())
         {
             if !rc.is_empty() {
+                *observed_output = true;
                 reasoning.push_str(rc);
                 think_buf.push_str(rc);
             }
@@ -468,12 +478,14 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
         // 正文：进 <think> 路由（内联思考不再混进回答）
         if let Some(dc) = delta.get("content").and_then(|c| c.as_str()) {
             if !dc.is_empty() {
+                *observed_output = true;
                 raw.push_str(dc);
                 pump!(false);
             }
         }
         if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
             for tc in tcs {
+                *observed_output = true;
                 let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
                 let entry = calls.entry(idx).or_insert_with(|| ToolCall {
                     id: String::new(),
@@ -497,11 +509,34 @@ fn stream_turn(resp: ureq::Response, hooks: &mut Hooks, h: &dyn Host) -> Result<
                 }
             }
         }
+        if !delta_buf.is_empty() || !think_buf.is_empty() {
+            if first_out
+                || last_flush.elapsed().as_millis() >= BATCH_MS
+                || delta_buf.len() > 400
+                || think_buf.len() > 400
+            {
+                flush!();
+                first_out = false;
+            }
+        }
     }
     // 收尾：清掉撕裂尾巴与未闭合的 <think>
     pump!(true);
     flush!();
-    Ok(Turn { content, reasoning, tool_calls: calls.into_values().collect(), usage })
+    if *observed_output && !finished {
+        // A clean socket EOF is not a completed model turn. In particular, do
+        // not hand an unfinished tool call to the agent for execution.
+        return Err(Failure::new(
+            "模型流在完成前断开；已收到部分内容，本轮不会自动重试",
+            false,
+        ));
+    }
+    Ok(Turn {
+        content,
+        reasoning,
+        tool_calls: calls.into_values().collect(),
+        usage,
+    })
 }
 
 /// 空轮次兜底：EOF 无任何输出且非打断 → 视为端点异常（模型名错误常此相），报错而不是让 UI 干等
@@ -511,7 +546,13 @@ pub fn ensure_nonempty(turn: Turn, was_interrupted: bool) -> Result<Turn, LlmErr
         && turn.tool_calls.is_empty()
         && !was_interrupted
     {
-        return Err(LlmError { message: "模型无任何输出——请检查「模型」名称与 API Endpoint 是否正确".into() });
+        return Err(LlmError {
+            message: "模型无任何输出——请检查「模型」名称与 API Endpoint 是否正确".into(),
+        });
     }
     Ok(turn)
 }
+
+#[cfg(test)]
+#[path = "llm_tests.rs"]
+mod tests;

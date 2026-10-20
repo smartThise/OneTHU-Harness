@@ -10,3 +10,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json", "gzip"] }
 chrono = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "socks"] }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+httpdate = "1"
