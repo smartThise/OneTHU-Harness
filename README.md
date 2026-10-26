@@ -64,6 +64,39 @@
 2. 打开左下角对话面板，在插件设置中填入 **API Key**（默认对接 DeepSeek，任何 OpenAI 兼容服务均可，包括本地模型）。
 3. 开始对话。
 
+## OneTHU CLI 与本机 MCP
+
+OneTHU CLI 提供模型之外的结构化服务入口。桌面宿主运行且用户已授权、打开本机服务时，
+CLI 和 MCP 都通过应用内同一权限门面使用学校会话。服务清单以 `service/list` 的实际返回为准，
+包含各操作的参数、访问类型及确认要求。网络学堂原始数据由服务层直接返回，保留分页与完整性字段；
+OH 的原有摘要工具继续用于聊天。
+
+默认监听 `127.0.0.1:8787`（`OH_MCP_PORT` 可调整，设为 `0` 关闭监听）：
+
+- `POST /cli/v1`：JSON-RPC 方法 `service/list` 和 `service/call`。
+- `POST /mcp`：标准 MCP `initialize`、`tools/list`、`tools/call`。
+  `onethu_services` 对应服务清单，`onethu_call` 对应服务调用，带完整 `structuredContent`。
+- `service/call` 参数为 `{operation, args: [], confirm?: boolean, deadlineUnixMs?: number}`。
+  写操作需要客户端明确传 `confirm: true`，并由用户在 OneTHU 内确认后执行。
+  服务列表和只读调用均不需要模型 Key，也不会调用模型。
+
+旧 MCP 工具只保留显式审查的只读白名单，并逐次转入同一 CLI 权限门面；
+研讨间查询在账号尚未初始化时提示到应用完成设置，不会自动绑定邮箱。
+旧流程、自由执行器、插件命令、技能执行与未审查工具均不开放；调用会提示使用
+`onethu_services` / `onethu_call`。需要完整列表、正文和附件时使用这两个统一入口，
+部分兼容查询仍保留聊天摘要的显示长度。
+
+```bash
+curl --noproxy 127.0.0.1 http://127.0.0.1:8787/cli/v1 \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"service/list","params":{}}'
+```
+
+宿主控制面 `activate` 会读取授权后的保存设置；独立 `mcp_sync` 随开关变化同步实际状态，
+不经过对话预检。回执包括 `enabled`、`listening`、`port`、`endpoint`、`cliEndpoint`，
+发生授权不足、设置读取失败或端口占用时带 `errorCode` / `error`。
+关闭服务会拦截新请求，并丢弃仍在等待的旧授权结果。浏览器 `Origin` 请求与非回环 Host 均被拒绝。
+
 ## 使用边界
 
 - **不涉及资金与凭据**；
@@ -146,11 +179,16 @@ cargo build --release
 ```bash
 cargo build
 node test/sim_host.mjs target/debug/onethu-harness
+node test/mcp_lifecycle.mjs target/debug/onethu-harness
+node test/chat_lifecycle.mjs target/debug/onethu-harness
 ```
 
 模拟器内嵌假 OpenAI SSE 服务器 + 宿主门面（session/card/library/settings/storage…），
 端到端验证：握手→命令清单→自检→agent 工具循环→流式增量→用量换算→会话持久化→
 导出→两段式确认（含对象解析断言）→dispose。
+
+`mcp_lifecycle` 启动真实 sidecar 并通过本机 HTTP 校验开关、端口冲突、失效授权、
+CLI/MCP 共用完整结果、宿主确认门禁及模型不可用时的独立服务访问，使用模拟学校数据。
 
 ## 须知
 

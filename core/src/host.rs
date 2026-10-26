@@ -289,7 +289,7 @@ pub fn bridge_call(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn bridge_call_timeout(
+pub(crate) fn bridge_call_timeout(
     pending: &PendingMap,
     seq: &AtomicU64,
     ns: &str,
@@ -347,6 +347,8 @@ fn bridge_call_timeout(
             Err(format!("宿主桥应答超时（{}s）", timeout_ms / 1000))
         }
     };
+    // 超时的控制面探针也要回收票据；设置页轮询不能累积永远无回执的 sender。
+    pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&rid);
     done.store(true, Ordering::Relaxed);
     out
 }

@@ -35,6 +35,19 @@ pub fn activate_commands() -> Value {
     })
 }
 
+/// MCP 控制面独立于聊天和模型：读取宿主已过滤授权的设置并返回实际监听状态。
+pub fn sync_mcp_settings(h: &mut dyn Host) -> Value {
+    let _ = mcp_server::read_settings_and_sync(h);
+    mcp_server::status()
+}
+
+/// 两种宿主共用的启动握手，保存的 MCP 开关无需先发消息即可生效。
+pub fn activate(h: &mut dyn Host) -> Value {
+    let mut result = activate_commands();
+    result["mcpStatus"] = sync_mcp_settings(h);
+    result
+}
+
 /* ═══════════════ 附件（run 的可选 attachments；2026-10-11 多模态） ═══════════════
  * 链路：前端 `lib/attach.ts` 把可读到的图片字节读成 base64（只带 `image/…` 且 ≤6MB）
  * → `im/oh.ts` 塞进 run 的 params.attachments → 宿主原样透传（sidecar / harness_embed）

@@ -2,7 +2,7 @@
 //! JSON-RPC over stdin/stdout。核心逻辑全在 onethu-harness-core（R1）。
 
 use incoming::Incoming;
-use onethu_harness_core::{activate_commands, dispatch_run, host::{RunEmit, StdioEmit, StdioHost}};
+use onethu_harness_core::{activate, dispatch_run, sync_mcp_settings, host::{RunEmit, StdioEmit, StdioHost}};
 
 /// 从 core 重新导出，保持 use 树干净
 mod incoming {
@@ -16,14 +16,12 @@ fn main() {
     // tools/call 走同一张桥回执表。
     // 2026-10-15 改口径（用户点名「OH MCP 是把我们自己暴露成 MCP」）：**起监听 ≠ 对外可用**。
     // 这里只负责把 listener 常驻绑上；接不接受请求由 core::mcp_server 的闸门决定，
-    // 而闸门由设置里那个「OH MCP 服务器」开关驱动（core::agent::chat 每轮同步，默认关）。
+    // 闸门由 activate / mcp_sync 独立读取设置驱动；chat 同步只作保险，默认关。
     {
         /* 端口口径在 core::mcp_server::port()（与 mcp_status 工具同一处读法，改一处即可） */
         let port = onethu_harness_core::mcp_server::port();
-        if port > 0 {
-            let (pending, seq) = h.bridge_arcs();
-            onethu_harness_core::mcp_server::spawn(pending, seq, port);
-        }
+        let (pending, seq) = h.bridge_arcs();
+        onethu_harness_core::mcp_server::spawn(pending, seq, port);
     }
     eprintln!("[harness] sidecar 已启动，等待 activate 握手");
     loop {
@@ -37,8 +35,18 @@ fn main() {
         match h.poll() {
             Incoming::Request { id, method, params, chat } => match method.as_str() {
                 "activate" => {
-                    eprintln!("[harness] activate：握手（设置在每次 run 时重新读取）");
-                    h.reply_ok(&id, activate_commands());
+                    eprintln!("[harness] activate：握手并同步 MCP 设置");
+                    let result = activate(&mut h);
+                    h.reply_ok(&id, result);
+                }
+                "mcp_sync" => {
+                    // 控制面不排在已有 settings 读取后面；较新的关闭可立即到宿主取值。
+                    // core 的设置代次会丢弃稍后返回的旧开启快照。
+                    let mut bridge = h.bridge(None);
+                    std::thread::spawn(move || {
+                        let result = sync_mcp_settings(&mut bridge);
+                        bridge.reply_ok(&id, result);
+                    });
                 }
                 "run" => {
                     // stdin 路由器已按输入顺序认领 chat 票；忙时在那里拒绝，不排队。

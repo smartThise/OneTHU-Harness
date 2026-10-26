@@ -67,6 +67,74 @@ pub fn all_tools() -> Vec<ToolDef> {
     };
     vec![
         ToolDef {
+            name: "app_services",
+            desc: "查询宿主实际提供的应用服务与参数。query 留空看能力分组；指定 contacts（OneTHU好友/名片）、organizations（组织/成员/项目/公告/关联云盘和GitLab）、xiaoda（清小搭智能体/技能广场/安装启停）、vault（暂存箱）等分组或完整操作名获取真实参数。后续用 app_call 调用。专用工具仍然可用，已安装插件/已启用技能只代表扩展目录，不能证明内建能力缺失。应用服务不要求打开对外CLI；后台 tasks 仍需其授权。",
+            params: p(json!({ "query": { "type": "string" } }), &[]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "app_call",
+            desc: "调用 app_services 返回的已审核操作，按 parameters 传位置参数数组 args；不得猜测操作/id。好友列表 contacts.list，组织列表 organizations.list；组织详情含真实成员/项目/公告及资源id，文件和仓库内容再用现有cloud/gitlab查询。清小搭技能广场 xiaoda.skills，已装 xiaoda.installed，导入 xiaoda.importSkill 和启停 xiaoda.enableSkill；不执行缺失环境的脚本。写操作要明确用户意图并设置 confirm=true，仍须通过应用实际确认或用户已授予的本机自动执行策略；返回前不可声称成功。无任意命名空间、网络或凭据直通。",
+            params: p(json!({
+                "operation": { "type": "string" },
+                "args": { "type": "array", "items": {}, "maxItems": 16 },
+                "confirm": { "type": "boolean" }
+            }), &["operation"]),
+            confirm: false, // The shared service, rather than model text, owns approval.
+        },
+        ToolDef {
+            name: "query_yuketang",
+            desc: "查询雨课堂（荷塘雨课堂 / Rain Classroom / Yuketang），与网络学堂分别接入。action=status 查看登录配置；courses 列出课堂 id；contents 查课件/视频/作业/试卷/公告目录；homework 查作业及截止/提交状态；homeworkDetail 查题目和已有作答（需 classroomId+leafTypeId）；leafDetail 查课件/视频详情（需 classroomId+leafId）；noticeDetail 查公告正文（需 classroomId+noticeIds）。id 从返回目录获取。contents 查询全部可获取内容；homework 保留既往作业，未来截止默认30天以内，days 可扩展。未配置或会话失效时引导用户在设置→账户→雨课堂扫码登录。只读查询，不提交作业，不索取或输出 Cookie。",
+            params: p(json!({
+                "action":{"type":"string","enum":["status","courses","contents","homework","homeworkDetail","leafDetail","noticeDetail"]},
+                "classroomId":{"type":"string"},"leafTypeId":{"type":"string"},"leafId":{"type":"string"},
+                "noticeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":64},
+                "days":{"type":"integer","minimum":1,"maximum":3660}
+            }), &["action"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "tasks_query",
+            desc: "查询本机常驻任务：list 列表、get 详情、channels 实际通知渠道、history 运行历史、inbox 本机消息。创建任务前先查 channels，只使用 available=true 的真实渠道 id；课程 id 先从 query_learn_courses 获取，不猜测收件人。get/history 需要任务 id。需要用户在高级配置开启 OneTHU CLI 并授权智能体服务；工具不会代开开关。",
+            params: p(json!({
+                "action": {"type":"string","enum":["list","get","channels","history","inbox"]},
+                "id": {"type":"string","description":"list 返回的任务 id，get/history 必填"}
+            }), &["action"]),
+            confirm: false,
+        },
+        ToolDef {
+            name: "tasks_manage",
+            desc: "管理本机常驻学习任务：create 新建、update 完整替换定义、pause 暂停并取消在途运行、resume 恢复、remove 删除任务（保留下载）、run 立即运行已批准任务。定时检查所选课程的课件/作业/通知、提醒 DDL，可下载到用户批准的绝对目录并通知已绑定 IM。先 tasks_query 查实际课程相关任务与 channels；create/update 必须 definition，其他动作需要 id，update 也需要 id。创建/修改/恢复会请求应用内批准持续范围；只有用户手动开启本机自动执行时才免逐次确认，模型不能开启。桌面常驻CLI后台保持运行时，关闭App仍执行；电脑休眠期间不执行，恢复后最多补跑一次。手机不承诺退出后的常驻。",
+            params: p(json!({
+                "action": {"type":"string","enum":["create","update","pause","resume","remove","run"]},
+                "id": {"type":"string","description":"tasks_query 返回的任务 id，create 之外必填"},
+                "definition": {
+                    "type":"object","required":["name","schedule","template"],
+                    "properties":{
+                        "name":{"type":"string","description":"任务名称"},
+                        "schedule":{"type":"object","required":["kind"],"properties":{
+                            "kind":{"type":"string","enum":["interval","daily","once"]},
+                            "everyMinutes":{"type":"number","minimum":1,"description":"interval 必填，检查间隔分钟"},
+                            "time":{"type":"string","description":"daily 必填，HH:mm"},
+                            "timezone":{"type":"string","description":"daily 必填，IANA 时区，如 Asia/Shanghai"},
+                            "runAt":{"type":"string","description":"once 必填，含时区的 ISO 日期时间"}
+                        }},
+                        "template":{"type":"object","required":["kind","courseIds","channels"],"properties":{
+                            "kind":{"type":"string","enum":["school-watch"]},
+                            "courseIds":{"type":"array","minItems":1,"items":{"type":"string"},"description":"用户选择的真实课程 id"},
+                            "semesterId":{"type":"string","description":"课程所属学期 id"},
+                            "outputDir":{"type":"string","description":"用户批准的本机绝对下载目录；省略则只检查和提醒，不下载"},
+                            "channels":{"type":"array","items":{"type":"string"},"description":"tasks_query(action=channels) 返回的 available=true 渠道 id；本机收件箱为 inbox"},
+                            "remindBeforeHours":{"type":"array","items":{"type":"number","minimum":0.01},"description":"DDL 提前提醒小时，默认 [24,1]"}
+                        }}
+                    }
+                }
+            }), &["action"]),
+            // The shared host service owns continuing-scope approval. The chat
+            // confirmation flag must never replace that local policy decision.
+            confirm: false,
+        },
+        ToolDef {
             name: "skills_search",
             desc: "查找用户已启用的清小搭技能。query 可留空列出技能索引。只提供此设备能使用的文字/资料与纯 JavaScript 技能；先检索再 skill_load。",
             params: p(json!({"query": {"type": "string"}}), &[]),
@@ -1609,8 +1677,129 @@ fn resolve_room(ctx: &mut Ctx, args: &Value) -> Result<(Value, String), String> 
     Ok((room.clone(), date_str))
 }
 
+/// OH uses the same task service as CLI/MCP. No model-supplied namespace,
+/// confirmation grant, automatic-execution setting or owner crosses this bridge.
+fn execute_task_tool(ctx: &mut Ctx, name: &str, args: &Value) -> Result<ToolOut, String> {
+    let object = args.as_object().ok_or("TASK_INVALID_ARGUMENT: expected object")?;
+    let action = s(args, "action");
+    let (needs_id, needs_definition, needs_approval) = match (name, action.as_str()) {
+        ("tasks_query", "list" | "channels" | "inbox") => (false, false, false),
+        ("tasks_query", "get" | "history") => (true, false, false),
+        ("tasks_manage", "create") => (false, true, true),
+        ("tasks_manage", "update") => (true, true, true),
+        ("tasks_manage", "resume") => (true, false, true),
+        ("tasks_manage", "pause" | "remove" | "run") => (true, false, false),
+        _ => return Err("UNKNOWN_TASK_OPERATION: use tasks_query or tasks_manage actions".into()),
+    };
+    if object.keys().any(|key| key != "action" && !(key == "id" && needs_id) && !(key == "definition" && needs_definition)) {
+        return Err("TASK_INVALID_ARGUMENT: unsupported parameter".into());
+    }
+    let mut values = Vec::new();
+    if needs_id {
+        let id = s(args, "id");
+        if id.trim().is_empty() || id.len() > 160 {
+            return Err("TASK_INVALID_ARGUMENT: id".into());
+        }
+        values.push(json!(id));
+    }
+    if needs_definition {
+        let definition = args.get("definition").filter(|value| value.is_object()).ok_or("TASK_INVALID_ARGUMENT: definition")?;
+        if definition.pointer("/template/kind").and_then(Value::as_str) != Some("school-watch") {
+            return Err("TASK_TEMPLATE_INVALID: this tool manages school-watch definitions".into());
+        }
+        values.push(definition.clone());
+    }
+    if ctx.h.interrupted() { return Err("TASK_CANCELLED".into()); }
+    let request = json!({"operation":format!("tasks.{action}"),"args":values,"confirm":needs_approval});
+    // confirm=true requests the host's local approval dialog; it does not grant
+    // approval. The host still checks device policy, consent, account and epoch.
+    let result = ctx.h.call_timeout("cli", "call", json!([request]), 180_000).map_err(friendly)?;
+    Ok(ToolOut::Text(serde_json::to_string(&result).map_err(|error| error.to_string())?))
+}
+
+pub(crate) fn app_service_names(value: &Value) -> Vec<String> {
+    value.get("operations").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|op| op.get("name").and_then(Value::as_str).map(str::to_owned)).collect()
+}
+
+fn app_service_catalog(value: &Value, query: &str) -> Value {
+    let query = query.trim().to_lowercase();
+    let query = match query.as_str() {
+        "好友" | "通讯录" | "名片" | "friends" => "contacts",
+        "组织" | "organization" => "organizations",
+        "清小搭" | "技能" | "skills" => "xiaoda",
+        "暂存箱" => "vault",
+        "plugins" => "plugin",
+        "whiteboard" | "白板" => "onepage",
+        "automation" => "flow",
+        _ => &query,
+    };
+    if query.is_empty() {
+        let mut groups = std::collections::BTreeMap::<String, usize>::new();
+        for name in app_service_names(value) {
+            *groups.entry(name.split('.').next().unwrap_or_default().to_owned()).or_default() += 1;
+        }
+        return json!({ "groups": groups, "hint": "Specify a group or operation name for the exact parameters. Runtime authorization, login and mode are checked on every call.",
+            "dedicatedTools": all_tools().iter().map(|tool| tool.name).collect::<Vec<_>>() });
+    }
+    let operations: Vec<Value> = value.get("operations").and_then(Value::as_array).into_iter().flatten()
+        .filter(|op| op.get("name").and_then(Value::as_str).is_some_and(|name| name.to_lowercase().contains(query))
+            || op.get("description").and_then(Value::as_str).is_some_and(|desc| desc.to_lowercase().contains(query)))
+        .cloned().collect();
+    let dedicated: Vec<Value> = all_tools().into_iter().filter(|tool|
+        tool.name.contains(query) || tool.desc.to_lowercase().contains(query)
+            || tool.desc.contains(query.trim())
+    ).map(|tool| json!({ "name": tool.name, "description": tool.desc, "parameters": tool.params, "requiresConfirmation": tool.confirm })).collect();
+    json!({ "query": query, "operations": operations, "total": operations.len(), "dedicatedTools": dedicated })
+}
+
 /// 执行工具。confirmed=true 表示用户已确认（仅确认型工具使用）。
 pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_servers: &[crate::mcp::McpServerDef]) -> Result<ToolOut, String> {
+    if name == "app_services" {
+        let result = host(ctx, "app", "list", json!([]))?;
+        return Ok(ToolOut::Text(app_service_catalog(&result, &s(args, "query")).to_string()));
+    }
+    if name == "app_call" {
+        let operation = s(args, "operation");
+        if operation.is_empty() || operation.len() > 120 { return Err("请使用 app_services 返回的操作名".into()); }
+        let values = args.get("args").cloned().unwrap_or(json!([]));
+        if !values.as_array().is_some_and(|a| a.len() <= 16) { return Err("args 应为位置参数数组（最多16项）".into()); }
+        let request = json!({ "operation": operation, "args": values, "confirm": args.get("confirm").and_then(Value::as_bool).unwrap_or(false) });
+        let result = ctx.h.call_timeout("app", "call", json!([request]), 180_000).map_err(friendly)?;
+        return Ok(ToolOut::Text(result.to_string()));
+    }
+    if name == "query_yuketang" {
+        let action = s(args, "action");
+        let classroom = s(args, "classroomId");
+        let required = |key: &str| -> Result<String, String> {
+            let value = s(args, key);
+            if value.trim().is_empty() { Err(format!("雨课堂查询缺少 {key}，请先查询 courses/contents 获取真实 id")) } else { Ok(value) }
+        };
+        let values = match action.as_str() {
+            "status" | "courses" => json!([]),
+            "contents" | "homework" => {
+                if let Some(days) = args.get("days") {
+                    if action == "contents" { return Err("contents 查询全部可获取内容；days 仅适用于 homework".into()); }
+                    let days = days.as_u64().filter(|n| (1..=3660).contains(n)).ok_or("days 应为 1 到 3660 的整数")?;
+                    json!([classroom, days])
+                } else if classroom.is_empty() { json!([]) } else { json!([classroom]) }
+            },
+            "homeworkDetail" => json!([required("classroomId")?, required("leafTypeId")?]),
+            "leafDetail" => json!([required("classroomId")?, required("leafId")?]),
+            "noticeDetail" => {
+                let ids = args.get("noticeIds").and_then(Value::as_array).filter(|ids| !ids.is_empty() && ids.len() <= 64)
+                    .filter(|ids| ids.iter().all(|id| id.as_str().is_some_and(|s| !s.trim().is_empty())))
+                    .ok_or("请提供 contents 返回的 noticeId/noticeIdCandidates")?;
+                json!([required("classroomId")?, ids])
+            },
+            _ => return Err("不支持的雨课堂查询动作".into()),
+        };
+        let result = host(ctx, "yuketang", &action, values)?;
+        return Ok(ToolOut::Text(serde_json::to_string_pretty(&result).map_err(|_| "雨课堂结果无法读取")?));
+    }
+    if name == "tasks_query" || name == "tasks_manage" {
+        return execute_task_tool(ctx, name, args);
+    }
     // MCP 动态工具（B2）：name 形如 mcp_<server>_<tool>
     // 静态工具名也可能以 `mcp_` 开头（mcp_status，2026-10-15 接线）：**先认静态表**，
     // 否则静态工具会被动态解析吞掉、回一句「未找到 MCP server」（本测试当场抓到的）。
@@ -3579,11 +3768,12 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             /* 只读报告：把 OneTHU 自己暴露出去的那个总闸（core/src/mcp_server.rs 的 ENABLED）。
                "开关"与"监听是否绑上"分开说 —— 用户把「闸门关着」看成「服务没起」是最常见的误解。
                不碰宿主：webview 不在场（或这条请求就是从本机 MCP 客户端进来的）也能答。 */
-            let on = crate::mcp_server::is_enabled();
-            let listening = crate::mcp_server::is_listening();
-            let port = crate::mcp_server::port();
+            let actual = crate::mcp_server::status();
+            let on = actual["enabled"].as_bool().unwrap_or(false);
+            let listening = actual["listening"].as_bool().unwrap_or(false);
+            let port = actual["port"].as_u64().unwrap_or(0) as u16;
             let defs = all_tools();
-            let exposed = defs.iter().filter(|t| !t.confirm).count();
+            let exposed = defs.iter().filter(|t| crate::mcp_server::legacy_read_tool(t.name)).count();
             let withheld = defs.len() - exposed;
             let outbound: Vec<String> = mcp_servers.iter().map(|m| m.name.clone()).collect();
             json!({
@@ -3591,13 +3781,16 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                 "enabled": on,
                 "listening": listening,
                 "port": port,
-                "endpoint": if port == 0 { String::new() } else { crate::mcp_server::endpoint() },
+                "endpoint": actual["endpoint"],
+                "cliEndpoint": actual["cliEndpoint"],
+                "error": actual["error"],
+                "errorCode": actual["errorCode"],
                 "reachableNow": on && listening && port > 0,
                 "state": mcp_state_text(on, listening, port),
-                "exposedTools": exposed,
+                "exposedTools": crate::mcp_server::exposed_tool_count(),
                 "withheldTools": withheld,
                 "switchPath": "设置浮层 → OneTHU Harness 段 → 高级配置 → 「OH MCP 服务器」开关",
-                "takeEffect": "拨完开关后发一条消息或重开 OH 即生效（每轮对话同步一次闸门）",
+                "takeEffect": "设置开关通过独立控制命令立即同步，启动时恢复保存值；不需要发送消息或调用模型",
                 "clientSetup": "别的 MCP 客户端（Claude Desktop / 脚本 / 编辑器插件）把地址填成 endpoint（Streamable-HTTP，POST JSON-RPC：initialize / tools/list / tools/call）；仅本机回环，不跨机",
                 "whenOff": "关着时任何连接一律 403 并说明未开启（不是超时、也不是空工具表）",
                 "outboundServers": outbound,
@@ -4036,6 +4229,141 @@ mod tests {
     }
 
     #[test]
+    fn query_yuketang_is_discoverable_read_only_and_routes_all_queries() {
+        let definition = schema().into_iter().find(|item| item["function"]["name"] == "query_yuketang").unwrap();
+        assert!(definition["function"]["description"].as_str().unwrap().contains("雨课堂"));
+        assert!(!is_confirm("query_yuketang"));
+        for (input, method, values) in [
+            (json!({"action":"status"}), "status", json!([])),
+            (json!({"action":"courses"}), "courses", json!([])),
+            (json!({"action":"homework","days":90}), "homework", json!(["",90])),
+            (json!({"action":"homework","classroomId":"c"}), "homework", json!(["c"])),
+            (json!({"action":"homeworkDetail","classroomId":"c","leafTypeId":"t"}), "homeworkDetail", json!(["c","t"])),
+            (json!({"action":"leafDetail","classroomId":"c","leafId":"l"}), "leafDetail", json!(["c","l"])),
+            (json!({"action":"noticeDetail","classroomId":"c","noticeIds":["n"]}), "noticeDetail", json!(["c",["n"]])),
+        ] {
+            let mut host = FakeHost::new(vec![json!({"rows":[]})]);
+            assert!(execute(&mut Ctx{h:&mut host},"query_yuketang",&input,false,&[]).is_ok());
+            assert_eq!(host.took(),vec![("yuketang".into(),method.into(),values)]);
+        }
+    }
+
+    #[test]
+    fn query_yuketang_rejects_writes_invalid_ranges_and_missing_ids() {
+        for input in [json!({"action":"submit"}),json!({"action":"homeworkDetail"}),json!({"action":"contents","days":0}),json!({"action":"contents","days":1.5}),json!({"action":"noticeDetail","classroomId":"c","noticeIds":[]})] {
+            let mut host=FakeHost::new(vec![]);
+            assert!(execute(&mut Ctx{h:&mut host},"query_yuketang",&input,false,&[]).is_err());
+            assert!(host.took().is_empty());
+        }
+    }
+
+    #[test]
+    fn app_services_discovers_reviewed_operations_and_app_call_keeps_host_approval() {
+        let catalog = json!({"operations":[
+            {"name":"contacts.list","parameters":{"type":"array"},"mutation":false},
+            {"name":"organizations.get","parameters":{"type":"array"},"mutation":false},
+            {"name":"xiaoda.enableSkill","parameters":{"type":"array"},"mutation":true}
+        ]});
+        let mut host = FakeHost::new(vec![catalog]);
+        let result = execute(&mut Ctx { h: &mut host }, "app_services", &json!({"query":"好友"}), false, &[]).unwrap();
+        if let ToolOut::Text(text) = result {
+            let data: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(data["operations"][0]["name"], "contacts.list");
+            assert_eq!(data["total"], 1);
+        } else { panic!("discovery is read-only"); }
+        assert_eq!(host.took()[0], ("app".into(), "list".into(), json!([])));
+        let mut host = FakeHost::new(vec![json!({"ok":true})]);
+        execute(&mut Ctx { h: &mut host }, "app_call", &json!({"operation":"xiaoda.enableSkill","args":["skill",true],"confirm":true}), false, &[]).unwrap();
+        assert_eq!(host.took()[0], ("app".into(), "call".into(), json!([{"operation":"xiaoda.enableSkill","args":["skill",true],"confirm":true}])));
+        assert!(!is_confirm("app_call"));
+        let mut host = FakeHost::new(vec![]);
+        assert!(execute(&mut Ctx { h: &mut host }, "app_call", &json!({"operation":"contacts.list","args":"invalid"}), false, &[]).is_err());
+        assert!(host.took().is_empty());
+    }
+
+    #[test]
+    fn resident_task_tools_are_discoverable_without_external_mcp() {
+        let definitions = schema_with(&[]);
+        for name in ["tasks_query", "tasks_manage"] {
+            let definition = definitions.iter().find(|item| item["function"]["name"] == name).expect("OH needs built-in task discovery");
+            assert!(definition["function"]["parameters"]["properties"]["action"]["enum"].is_array());
+            assert!(!is_confirm(name), "local service owns approval, not a second chat confirmation");
+            assert!(!crate::mcp_server::legacy_read_tool(name), "external clients must use onethu_call, not the legacy executor");
+        }
+    }
+
+    #[test]
+    fn resident_task_tools_share_the_guarded_host_route() {
+        let definition = json!({"name":"DDL watch","schedule":{"kind":"interval","everyMinutes":30},"template":{"kind":"school-watch","courseIds":["real-course-id"],"channels":["inbox"]}});
+        for (tool, action, arguments, approval) in [
+            ("tasks_query", "list", json!([]), false),
+            ("tasks_query", "channels", json!([]), false),
+            ("tasks_query", "inbox", json!([]), false),
+            ("tasks_query", "get", json!(["task-id"]), false),
+            ("tasks_query", "history", json!(["task-id"]), false),
+            ("tasks_manage", "create", json!([definition.clone()]), true),
+            ("tasks_manage", "update", json!(["task-id",definition.clone()]), true),
+            ("tasks_manage", "pause", json!(["task-id"]), false),
+            ("tasks_manage", "resume", json!(["task-id"]), true),
+            ("tasks_manage", "remove", json!(["task-id"]), false),
+            ("tasks_manage", "run", json!(["task-id"]), false),
+        ] {
+            let mut input = json!({"action":action});
+            if ["get","history","update","pause","resume","remove","run"].contains(&action) { input["id"] = json!("task-id"); }
+            if ["create","update"].contains(&action) { input["definition"] = definition.clone(); }
+            let expected = json!({"result":"actual-host-value","id":"task-id"});
+            let mut host = FakeHost::new(vec![expected.clone()]);
+            // A false chat-confirmed flag must still reach the host's own local
+            // confirmation policy. A true flag must never bypass that policy.
+            let mut ctx = Ctx { h: &mut host };
+            let result = execute(&mut ctx, tool, &input, false, &[]).unwrap();
+            match result { ToolOut::Text(text) => assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), expected), _ => panic!("unexpected chat confirmation") }
+            assert_eq!(host.took(), vec![("cli".into(),"call".into(),json!([{"operation":format!("tasks.{action}"),"args":arguments,"confirm":approval}]))]);
+        }
+    }
+
+    #[test]
+    fn resident_task_tools_reject_unlisted_actions_and_forged_authority() {
+        for (tool, input) in [
+            ("tasks_query",json!({"action":"create"})),
+            ("tasks_manage",json!({"action":"setAutomatic","value":true})),
+            ("tasks_manage",json!({"action":"settings.set","value":true})),
+            ("tasks_manage",json!({"action":"pause"})),
+            ("tasks_manage",json!({"action":"resume","id":"t","confirm":true})),
+            ("tasks_manage",json!({"action":"run","id":"t","confirmationGrant":{"approved":true}})),
+            ("tasks_manage",json!({"action":"create","definition":{"template":{"kind":"operation","operation":"mail.send"}}})),
+            ("tasks_manage",json!({"action":"update","id":"t","definition":null})),
+        ] {
+            let mut host = NoHost;
+            assert!(execute(&mut Ctx { h:&mut host },tool,&input,true,&[]).is_err());
+        }
+    }
+
+    #[test]
+    fn resident_task_tools_wait_for_and_propagate_local_policy() {
+        struct DeniedHost;
+        impl Host for DeniedHost {
+            fn call(&mut self, _: &str, _: &str, _: Value) -> Result<Value,String> { panic!("must allow time for local confirmation"); }
+            fn call_timeout(&mut self, ns: &str, method: &str, args: Value, timeout: u64) -> Result<Value,String> {
+                assert_eq!((ns,method,timeout),("cli","call",180_000));
+                assert_eq!(args[0]["confirm"],json!(true));
+                Err("CONFIRMATION_CANCELLED: No changes were made.".into())
+            }
+            fn interrupted(&self) -> bool { false }
+        }
+        let mut host = DeniedHost;
+        let result = execute(&mut Ctx { h:&mut host },"tasks_manage",&json!({"action":"resume","id":"task-id"}),true,&[]);
+        assert!(matches!(result,Err(error) if error.starts_with("CONFIRMATION_CANCELLED")));
+        struct InterruptedHost;
+        impl Host for InterruptedHost {
+            fn call(&mut self, _: &str, _: &str, _: Value) -> Result<Value,String> { panic!("cancelled run must not reach host"); }
+            fn interrupted(&self) -> bool { true }
+        }
+        let mut host = InterruptedHost;
+        assert!(matches!(execute(&mut Ctx { h:&mut host },"tasks_query",&json!({"action":"list"}),false,&[]),Err(error) if error == "TASK_CANCELLED"));
+    }
+
+    #[test]
     fn skill_tools_reach_the_real_host_contract() {
         for (tool, method, args, expected) in [
             ("skills_search", "skillSearch", json!({"query":"writing"}), json!(["writing"])),
@@ -4134,6 +4462,7 @@ mod tests {
     /// 并且**不能**声称能替用户开开关。
     #[test]
     fn mcp_status_reports_gate_and_endpoint() {
+        let _guard = crate::mcp_server::TEST_STATE_LOCK.lock().unwrap();
         crate::mcp_server::set_enabled(false);
         let v = run("mcp_status", json!({}));
         assert_eq!(v["enabled"], json!(false), "默认必须是关（本机暴露要用户显式打开）");
@@ -4143,7 +4472,7 @@ mod tests {
         assert!(v["switchPath"].as_str().unwrap_or("").contains("高级配置"), "要说清开关在哪：{}", v["switchPath"]);
         let exposed = v["exposedTools"].as_i64().unwrap_or(0);
         let withheld = v["withheldTools"].as_i64().unwrap_or(0);
-        assert!(exposed > 50, "无需确认的工具应该有量：{exposed}");
+        assert_eq!(exposed as usize, crate::mcp_server::exposed_tool_count());
         assert!(withheld > 0, "需要确认的写操作不该上墙：{withheld}");
 
         /* 闸门开：报告要跟着变（reachableNow 仍取决于监听在不在，测试线程里没起监听） */
@@ -4157,6 +4486,7 @@ mod tests {
     /// 端口口径唯一处：OH_MCP_PORT 认得出就认，认不出退回 8787（报告与 bin 同一个函数）。
     #[test]
     fn mcp_port_env_is_respected() {
+        let _guard = crate::mcp_server::TEST_STATE_LOCK.lock().unwrap();
         std::env::set_var("OH_MCP_PORT", "9311");
         assert_eq!(crate::mcp_server::port(), 9311);
         assert!(crate::mcp_server::endpoint().contains(":9311/mcp"));
@@ -4165,13 +4495,13 @@ mod tests {
         std::env::remove_var("OH_MCP_PORT");
     }
 
-    /// 本机 MCP 墙上的工具表 = 全部无需确认的工具：mcp_status 必须在墙内（用户问
+    /// 本机 MCP 只开放显式审查的旧只读工具：mcp_status 必须在墙内（用户问
     /// 「别的客户端能看到什么」时，答案要一致）。
     #[test]
     fn mcp_status_is_exposed_on_the_wall() {
         let defs = all_tools();
         let me = defs.iter().find(|t| t.name == "mcp_status").expect("mcp_status 得注册进工具表");
         assert!(!me.confirm, "只读工具不该要求确认（要求确认就不会上墙）");
-        assert!(defs.iter().filter(|t| !t.confirm).any(|t| t.name == "mcp_status"));
+        assert!(crate::mcp_server::legacy_read_tool(me.name));
     }
 }
