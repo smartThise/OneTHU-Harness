@@ -6,8 +6,8 @@ use reqwest::{Client, Response};
 use std::future::Future;
 use std::time::{Duration, SystemTime};
 
-pub(super) const HEADER_TIMEOUT: Duration = Duration::from_secs(60);
-pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+pub(super) const HEADER_TIMEOUT: Duration = Duration::from_secs(180);
+pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 pub(super) const MAX_RETRIES: usize = 2;
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const CANCEL_POLL: Duration = Duration::from_millis(25);
@@ -16,6 +16,7 @@ pub(super) struct Failure {
     pub error: LlmError,
     pub retryable: bool,
     pub retry_after: Option<Duration>,
+    pub rate_limited: bool,
 }
 
 impl Failure {
@@ -26,6 +27,7 @@ impl Failure {
             },
             retryable,
             retry_after: None,
+            rate_limited: false,
         }
     }
 
@@ -40,6 +42,7 @@ impl From<LlmError> for Failure {
             error,
             retryable: false,
             retry_after: None,
+            rate_limited: false,
         }
     }
 }
@@ -83,10 +86,12 @@ pub(super) async fn io<T>(
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) => {
                 // Invalid URL/headers and decoding failures are not transient.
-                let retryable = !error.is_builder() && !error.is_decode() && !error.is_redirect();
+                // A connection failure is safe to retry. An ambiguous send/read error
+                // may have reached the model already; do not create a second generation.
+                let retryable = error.is_connect();
                 Err(Failure::new(format!("LLM 网络错误：{}", error.without_url()), retryable))
             }
-            Err(_) => Err(Failure::new(format!("LLM 等待响应超时（{} 秒）", timeout.as_secs()), true)),
+            Err(_) => Err(Failure::new(format!("LLM 等待响应超时（{} 秒）", timeout.as_secs()), false)),
         }
     }
 }
@@ -165,8 +170,17 @@ pub(super) async fn http_failure(mut response: Response, h: &dyn Host) -> Failur
                 message.chars().take(400).collect::<String>()
             ),
         },
-        retryable: status == 408 || status == 429 || (500..=599).contains(&status),
-        retry_after,
+        rate_limited: status == 429,
+        retryable: status == 429 || (500..=599).contains(&status),
+        retry_after: if status == 429 {
+            Some(
+                retry_after
+                    .unwrap_or(Duration::from_secs(5))
+                    .max(Duration::from_secs(5)),
+            )
+        } else {
+            retry_after
+        },
     }
 }
 
@@ -234,4 +248,44 @@ pub(super) fn log_retry(hooks: &mut Hooks, retry: usize, delay: Duration, failur
         MAX_RETRIES,
         failure.error.message
     ));
+}
+
+// Process-wide school-provider lane, including tool follow-up turns and IM
+// conversations. Waiting never owns a request and cancellation stays immediate.
+static MADMODEL_LANE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) fn madmodel_lane(h: &dyn Host) -> Result<std::sync::MutexGuard<'static, ()>, LlmError> {
+    loop {
+        if h.interrupted() {
+            return Err(Failure::cancelled().error);
+        }
+        match MADMODEL_LANE.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(error)) => return Ok(error.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(CANCEL_POLL),
+        }
+    }
+}
+
+static MADMODEL_RETRY_AT: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+pub(super) fn remember_rate_limit(failure: &Failure) {
+    if !failure.rate_limited {
+        return;
+    }
+    let now = std::time::Instant::now();
+    let until = now
+        .checked_add(failure.retry_after.unwrap_or(Duration::from_secs(5)))
+        .unwrap_or(now + Duration::from_secs(86400));
+    let mut next = MADMODEL_RETRY_AT.lock().unwrap_or_else(|e| e.into_inner());
+    *next = Some(next.map_or(until, |prior| prior.max(until)));
+}
+pub(super) async fn wait_rate_limit(h: &dyn Host) -> Result<(), Failure> {
+    let delay = MADMODEL_RETRY_AT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .and_then(|until| until.checked_duration_since(std::time::Instant::now()));
+    if let Some(delay) = delay {
+        wait_retry(h, delay).await?;
+    }
+    Ok(())
 }

@@ -227,7 +227,7 @@ fn system_prompt(cfg: &Config) -> String {
          先查真实课程 id 和 tasks_query(action=channels) 的可用渠道 id，再说明频率、课程、\
          下载目录与通知渠道，调用 tasks_manage 创建 school-watch；修改先 get 查看完整定义。\
          创建/修改/恢复会按本机策略申请持续范围授权，等待应用批准结果后再报告成功。\
-         CLI_DISABLED 时请用户手动打开高级配置的 OneTHU CLI 并授权智能体服务；\
+         应用内任务需要智能体服务授权，外部 CLI 开关只管理其他客户端的访问；\
          工具不能代开服务或自动执行开关。桌面常驻CLI后台接收的任务在关闭App后仍可执行；\
          本机后台需要持续运行，休眠期间不会执行，恢复后最多补跑一次；手机不承诺退出后的后台常驻。\
          可随时通过 pause 暂停、history 查看记录。\n\
@@ -428,7 +428,7 @@ pub fn chat(h: &mut dyn Host, emit: &dyn Emit, input: &str, attachments: &[Attac
         Ok(catalog) => {
             let names = tools::app_service_names(&catalog);
             if !names.is_empty() {
-                prompt.push_str(&format!("\n本轮宿主实际注册的服务操作（具体参数用app_services查询，每次调用仍核验权限/账号/模式）：{}。\n后台tasks服务仍需CLI授权；目录中的注册表示有接口，配置与实时可用性以实际查询为准。", names.join(", ")));
+                prompt.push_str(&format!("\n本轮宿主实际注册的服务操作（具体参数用app_services查询，每次调用仍核验权限/账号/模式）：{}。\n应用内任务与查询可直接使用，无需开启外部 CLI；目录中的注册表示有接口，配置与实时可用性以实际查询为准。", names.join(", ")));
             }
         },
         Err(_) => prompt.push_str("\n本轮应用能力目录读取失败；可以使用已有专用工具，不能据此断言未接入。"),

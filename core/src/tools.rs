@@ -95,7 +95,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "tasks_query",
-            desc: "查询本机常驻任务：list 列表、get 详情、channels 实际通知渠道、history 运行历史、inbox 本机消息。创建任务前先查 channels，只使用 available=true 的真实渠道 id；课程 id 先从 query_learn_courses 获取，不猜测收件人。get/history 需要任务 id。需要用户在高级配置开启 OneTHU CLI 并授权智能体服务；工具不会代开开关。",
+            desc: "查询本机常驻任务：list 列表、get 详情、channels 实际通知渠道、history 运行历史、inbox 本机消息。创建任务前先查 channels，只使用 available=true 的真实渠道 id；课程 id 先从 query_learn_courses 获取，不猜测收件人。get/history 需要任务 id。需要智能体服务授权；应用内查询和任务管理可直接使用，外部 CLI 开关独立管理外部访问。",
             params: p(json!({
                 "action": {"type":"string","enum":["list","get","channels","history","inbox"]},
                 "id": {"type":"string","description":"list 返回的任务 id，get/history 必填"}
@@ -1713,7 +1713,7 @@ fn execute_task_tool(ctx: &mut Ctx, name: &str, args: &Value) -> Result<ToolOut,
     let request = json!({"operation":format!("tasks.{action}"),"args":values,"confirm":needs_approval});
     // confirm=true requests the host's local approval dialog; it does not grant
     // approval. The host still checks device policy, consent, account and epoch.
-    let result = ctx.h.call_timeout("cli", "call", json!([request]), 180_000).map_err(friendly)?;
+    let result = ctx.h.call_timeout("app", "call", json!([request]), 180_000).map_err(friendly)?;
     Ok(ToolOut::Text(serde_json::to_string(&result).map_err(|error| error.to_string())?))
 }
 
@@ -4318,7 +4318,7 @@ mod tests {
             let mut ctx = Ctx { h: &mut host };
             let result = execute(&mut ctx, tool, &input, false, &[]).unwrap();
             match result { ToolOut::Text(text) => assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), expected), _ => panic!("unexpected chat confirmation") }
-            assert_eq!(host.took(), vec![("cli".into(),"call".into(),json!([{"operation":format!("tasks.{action}"),"args":arguments,"confirm":approval}]))]);
+            assert_eq!(host.took(), vec![("app".into(),"call".into(),json!([{"operation":format!("tasks.{action}"),"args":arguments,"confirm":approval}]))]);
         }
     }
 
@@ -4345,7 +4345,7 @@ mod tests {
         impl Host for DeniedHost {
             fn call(&mut self, _: &str, _: &str, _: Value) -> Result<Value,String> { panic!("must allow time for local confirmation"); }
             fn call_timeout(&mut self, ns: &str, method: &str, args: Value, timeout: u64) -> Result<Value,String> {
-                assert_eq!((ns,method,timeout),("cli","call",180_000));
+                assert_eq!((ns,method,timeout),("app","call",180_000));
                 assert_eq!(args[0]["confirm"],json!(true));
                 Err("CONFIRMATION_CANCELLED: No changes were made.".into())
             }

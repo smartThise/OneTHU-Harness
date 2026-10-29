@@ -449,3 +449,65 @@ fn retry_after_http_dates_and_jitter_are_bounded() {
         assert!(delay <= Duration::from_millis(550 * (1 << attempt)));
     }
 }
+
+#[test]
+fn school_provider_sessions_share_one_request_lane() {
+    let server = Server::start(|_, stream| {
+        thread::sleep(Duration::from_millis(150));
+        success(stream);
+    });
+    let mut cfg = server.cfg(true);
+    cfg.base_url = format!("{}/madmodel/v1", server.url);
+    let workers: Vec<_> = (0..3)
+        .map(|_| {
+            let cfg = cfg.clone();
+            thread::spawn(move || run(&cfg, flag()).0.is_ok())
+        })
+        .collect();
+    for worker in workers {
+        assert!(worker.join().unwrap());
+    }
+    assert_eq!(server.requests.load(Ordering::SeqCst), 3);
+    assert_eq!(server.peak.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn ambiguous_header_timeout_is_not_replayed() {
+    let host = LocalHost {
+        cancelled: flag(),
+        _local: Rc::new(()),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut failure = runtime
+        .block_on(transport::io(
+            &host,
+            Duration::from_millis(5),
+            std::future::pending::<Result<(), reqwest::Error>>(),
+        ))
+        .unwrap_err();
+    assert!(!failure.retryable);
+    assert!(transport::retry_delay(&mut failure, 0).is_none());
+    assert!(transport::HEADER_TIMEOUT >= Duration::from_secs(180));
+}
+
+#[test]
+fn cancelled_school_request_does_not_wait_for_another_session() {
+    let host = LocalHost {
+        cancelled: flag(),
+        _local: Rc::new(()),
+    };
+    let _permit = transport::madmodel_lane(&host).unwrap_or_else(|e| panic!("{}", e.message));
+    let worker = thread::spawn(|| {
+        let cancelled = flag();
+        cancelled.store(true, Ordering::SeqCst);
+        let host = LocalHost {
+            cancelled,
+            _local: Rc::new(()),
+        };
+        transport::madmodel_lane(&host).is_err()
+    });
+    assert!(worker.join().unwrap());
+}

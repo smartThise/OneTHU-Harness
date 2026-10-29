@@ -66,6 +66,7 @@ pub fn chat_turn(
             });
         }
     }
+    let _mad_lane = if url_contains_madmodel(cfg) { Some(transport::madmodel_lane(h)?) } else { None };
     let url = format!("{}/chat/completions", cfg.base_url);
     // 多模态（2026-10-11）：只有「开关开 + 这条消息带图」时 content 才变 parts 数组；
     // 其余情况与加多模态之前完全一致（形状契约见 session::Msg::to_value 注释）。
@@ -113,6 +114,7 @@ pub fn chat_turn(
         })?;
     runtime.block_on(async {
         let client = transport::client()?;
+        if url_contains_madmodel(cfg) { transport::wait_rate_limit(h).await.map_err(|e|e.error)?; }
         for retry in 0..=transport::MAX_RETRIES {
             let mut observed_output = false;
             let attempt =
@@ -136,6 +138,7 @@ pub fn chat_turn(
             if h.interrupted() || observed_output {
                 failure.retryable = false;
             }
+            if url_contains_madmodel(cfg) { transport::remember_rate_limit(&failure); }
             if let Some(delay) = transport::retry_delay(&mut failure, retry) {
                 transport::log_retry(hooks, retry, delay, &failure);
                 transport::wait_retry(h, delay).await.map_err(|e| e.error)?;
@@ -207,7 +210,7 @@ async fn request_once(
 
 /// 免费档判定：请求将打向 madmodel（含被回退前的默认 base）
 fn url_contains_madmodel(cfg: &crate::config::Config) -> bool {
-    cfg.base_url.contains("madmodel")
+    cfg.uses_free_tier || cfg.base_url.contains("madmodel")
 }
 
 fn parse_completion(v: Value) -> Result<Turn, LlmError> {
