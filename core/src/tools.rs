@@ -1831,6 +1831,14 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
                         let il = c.get("inputLabel").and_then(|x| x.as_str()).unwrap_or("");
                         let io = if il.is_empty() { "（无输入）".to_string() } else { format!("（输入：{il}）") };
                         lines.push(format!("- pluginId={pid} cmdId={cid} 「{title}」{io}"));
+                        /* 插件自带的能力说明：模型据此判断何时该用、如何续读。
+                           本体不写死任何插件名或领域指引。 */
+                        if let Some(hint) = c.get("agentHint").and_then(|x| x.as_str()) {
+                            let hint = hint.trim();
+                            if !hint.is_empty() {
+                                lines.push(format!("  提示：{hint}"));
+                            }
+                        }
                     }
                 }
             }
