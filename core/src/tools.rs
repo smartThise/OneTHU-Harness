@@ -1956,10 +1956,22 @@ pub fn execute(ctx: &mut Ctx, name: &str, args: &Value, confirmed: bool, mcp_ser
             return Ok(ToolOut::Text("缺少 pluginId 或 cmdId：先用 list_plugin_cmds 查可用命令。".into()));
         }
         let v = host(ctx, "plugins", "call", json!([pid, cid, input]))?;
-        let text = match v {
+        let mut text = match v {
             Value::String(t) => t,
             other => serde_json::to_string_pretty(&other).unwrap_or_else(|_| "（无输出）".into()),
         };
+        /* 命令触发的插件提示：随本次工具结果返回，只在这一次调用里出现。 */
+        if let Ok(h) = host(ctx, "plugins", "agentHints", json!({"mode":"command","commandId":cid})) {
+            if let Some(a) = h.as_array() {
+                for hnt in a {
+                    let hint = hnt.get("text").and_then(|x| x.as_str()).unwrap_or("").trim();
+                    if !hint.is_empty() {
+                        text.push_str("\n\n插件提示：");
+                        text.push_str(hint);
+                    }
+                }
+            }
+        }
         return Ok(ToolOut::Text(if text.is_empty() { "（命令执行完成，无输出）".into() } else { text }));
     }
     if name == "list_favorite_kinds" {
